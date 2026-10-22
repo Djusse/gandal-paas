@@ -41,7 +41,7 @@ async def gitlab_webhook(
     pipeline_status = attrs.get('status')
     sha = attrs.get('sha', '')
 
-    p = db.query(Project).filter_by(gitlab_project_id=gitlab_project_id).first()
+    p = db.query(Project).filter_by(gitlab_project_id=gitlab_project_id).order_by(Project.id.desc()).first()
     if not p or pipeline_status not in STATUS_MAP:
         return {'ignored': True}
 

@@ -1,9 +1,13 @@
+import time
+
+
 class GitLabFake:
     def __init__(self):
-        self._next = 1
+        self._next = int(time.time() * 10) % 10000000 + 1
         self.projects = {}
         self.fail_create = False
         self.custom_images = {}
+
 
     async def create_project(self, name: str) -> dict:
         if self.fail_create:
