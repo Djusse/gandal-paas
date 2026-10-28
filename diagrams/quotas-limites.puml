@@ -1,0 +1,170 @@
+@startuml quotas-limites
+!theme plain
+title Gestion des quotas et limites de ressources
+
+participant "gandal_deploy.py" as script
+participant "API Server" as api
+participant "Admission\nController" as admission
+participant "Scheduler" as scheduler
+database "etcd" as etcd
+
+== Déploiement initial : 2 réplicas ==
+
+script -> api : POST Deployment\n(replicas: 2, no resources specified)
+api -> admission : Validate + Mutate
+activate admission
+
+admission -> etcd : Read LimitRange (default-limits)
+etcd --> admission : default: cpu=500m, memory=512Mi\ndefaultRequest: cpu=100m, memory=128Mi
+
+admission -> admission : Inject default values into pod spec
+note right
+    Container spec devient:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+end note
+
+admission -> etcd : Read ResourceQuota (project-quota)
+etcd --> admission : hard:\n  pods: 4\n  requests.cpu: 1\n  requests.memory: 1Gi\n  limits.cpu: 2\n  limits.memory: 2Gi
+
+admission -> admission : Calculate current usage + new request
+note right
+    Current usage: 0
+    New request:
+      2 pods × 100m CPU = 200m
+      2 pods × 128Mi RAM = 256Mi
+    
+    Total:
+      pods: 2 / 4 ✅
+      requests.cpu: 200m / 1 ✅
+      requests.memory: 256Mi / 1Gi ✅
+end note
+
+admission --> api : ✅ Approved
+deactivate admission
+
+api -> etcd : Create Deployment
+etcd --> api : Created
+api -> scheduler : 2 pods Pending
+scheduler -> scheduler : Schedule pods
+scheduler --> api : Pods scheduled
+
+== Tentative de scale à 10 réplicas ==
+
+script -> api : PATCH Deployment\n(replicas: 10)
+api -> etcd : Update Deployment.spec.replicas = 10
+etcd --> api : Updated
+
+api -> scheduler : Watch: 8 new pods Pending (total 10)
+activate scheduler
+
+scheduler -> api : Request pod creation (3/10)
+api -> admission : Validate pod
+activate admission
+
+admission -> etcd : Read ResourceQuota
+etcd --> admission : Current usage:\n  pods: 2\n  requests.cpu: 200m\n  requests.memory: 256Mi
+
+admission -> admission : Calculate: current + new
+note right
+    New request for 8 pods:
+      8 × 100m = 800m CPU
+      8 × 128Mi = 1024Mi RAM
+    
+    Total would be:
+      pods: 10 / 4 ❌ EXCEEDED
+      requests.cpu: 1000m / 1000m ✅
+      requests.memory: 1280Mi / 1Gi ❌ EXCEEDED
+end note
+
+admission --> api : ❌ REJECTED\nQuota exceeded
+deactivate admission
+
+api -> etcd : Create Event\nReason: FailedCreate\nMessage: exceeded quota
+scheduler -[#red]x api : Cannot create pod
+
+note right
+    Le Deployment reste à
+    replicas=10 dans la spec,
+    mais seulement 4 pods
+    sont créés (2 existants + 2 nouveaux)
+end note
+
+scheduler -> api : Request pod creation (4/10)
+api -> admission : Validate pod
+admission -> admission : Calculate: 4 pods total
+note right
+    pods: 4 / 4 ✅ (limite atteinte)
+    requests.cpu: 400m / 1 ✅
+    requests.memory: 512Mi / 1Gi ✅
+end note
+admission --> api : ✅ Approved (dernier pod autorisé)
+deactivate scheduler
+
+== État final ==
+
+script -> api : GET Deployment status
+api -> etcd : Read Deployment
+etcd --> api : spec.replicas: 10\nstatus.replicas: 4\nstatus.readyReplicas: 4
+
+api --> script : Status: 4/10 ready
+note right
+    Le cluster a créé le maximum
+    de pods autorisés par le quota
+end note
+
+script -> api : GET Events
+api -> etcd : List events
+etcd --> api : Events with reason=FailedCreate
+api --> script : "exceeded quota: project-quota"
+
+script --> script : ✅ Test 5 passed:\nQuota respected, scale limited
+
+== Diagramme des limites ==
+
+rectangle "ResourceQuota: project-quota" as quota {
+    rectangle "Pods: 4 / 4" as pods #pink
+    rectangle "CPU requests: 400m / 1" as cpu_req #lightgreen
+    rectangle "Memory requests: 512Mi / 1Gi" as mem_req #lightgreen
+    rectangle "CPU limits: 2 / 2" as cpu_lim #lightgreen
+    rectangle "Memory limits: 2Gi / 2Gi" as mem_lim #lightgreen
+}
+
+rectangle "LimitRange: default-limits" as limitrange {
+    rectangle "Default CPU: 500m" as default_cpu
+    rectangle "Default Memory: 512Mi" as default_mem
+    rectangle "Default Request CPU: 100m" as req_cpu
+    rectangle "Default Request Memory: 128Mi" as req_mem
+}
+
+note bottom of quota
+    Le quota limite le **total**
+    des ressources du namespace
+end note
+
+note bottom of limitrange
+    Le LimitRange injecte des
+    valeurs par défaut si non spécifiées
+end note
+
+legend right
+    |= État | Couleur |
+    | <#lightgreen> En dessous | Vert |
+    | <#pink> Limite atteinte | Rose |
+    | <#red> Dépassement | Rouge (rejeté) |
+    
+    **Comportement:**
+    1. LimitRange injecte les valeurs par défaut
+    2. Admission Controller vérifie le quota
+    3. Si quota dépassé → rejet du pod
+    4. Le Deployment reste à replicas=10 (état désiré)
+    5. Seulement 4 pods sont créés (état réel)
+    6. Events "FailedCreate" générés
+endlegend
+
+@enduml

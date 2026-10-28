@@ -1,0 +1,113 @@
+@startuml isolation-reseau
+!theme plain
+title Isolation réseau entre projets (NetworkPolicy)
+
+skinparam packageStyle rectangle
+skinparam linetype ortho
+
+package "K3s Cluster - Réseau overlay Flannel (10.42.0.0/16)" {
+    
+    package "Namespace: kube-system" {
+        component "Traefik Pod\n10.42.0.5" as traefik <<Ingress>>
+    }
+    
+    package "Namespace: project-alice-memoire" {
+        
+        rectangle "NetworkPolicy: isolate-ingress" as netpol_alice {
+            note right
+                spec:
+                  podSelector: {} (tous les pods)
+                  policyTypes: [Ingress]
+                  ingress:
+                  - from:
+                    - podSelector: {}
+                      (même namespace)
+                  - from:
+                    - namespaceSelector:
+                        matchLabels:
+                          kubernetes.io/metadata.name:
+                            kube-system
+            end note
+        }
+        
+        component "Pod my-api-1\n10.42.0.11" as alice_pod1 {
+            portin " :80" as alice_port1
+        }
+        
+        component "Pod my-api-2\n10.42.0.12" as alice_pod2 {
+            portin " :80" as alice_port2
+        }
+        
+        component "Service my-api\nClusterIP: 10.43.5.10" as alice_svc
+        
+        alice_svc -down-> alice_port1 : "✅ Autorisé"
+        alice_svc -down-> alice_port2 : "✅ Autorisé"
+    }
+    
+    package "Namespace: project-bob-test" {
+        
+        rectangle "NetworkPolicy: isolate-ingress" as netpol_bob
+        
+        component "Pod web-1\n10.42.0.21" as bob_pod1 {
+            portin " :80" as bob_port1
+        }
+        
+        component "Pod web-2\n10.42.0.22" as bob_pod2 {
+            portin " :80" as bob_port2
+        }
+        
+        component "Service web\nClusterIP: 10.43.7.20" as bob_svc
+        
+        bob_svc -down-> bob_port1
+        bob_svc -down-> bob_port2
+    }
+    
+    package "Namespace: project-charlie-data" {
+        component "Pod api-1\n10.42.0.31" as charlie_pod
+    }
+}
+
+' Flux autorisés (vert)
+traefik -[#green,bold]down-> alice_port1 : "✅ Autorisé\n(kube-system)"
+traefik -[#green,bold]down-> bob_port1 : "✅ Autorisé\n(kube-system)"
+alice_pod1 -[#green,bold]-> alice_port2 : "✅ Autorisé\n(même namespace)"
+
+' Flux bloqués (rouge)
+bob_pod1 -[#red,bold]-> alice_port1 : "❌ BLOQUÉ\n(autre namespace)"
+alice_pod1 -[#red,bold]-> bob_port1 : "❌ BLOQUÉ\n(autre namespace)"
+charlie_pod -[#red,bold]-> alice_port1 : "❌ BLOQUÉ\n(autre namespace)"
+charlie_pod -[#red,bold]-> bob_port1 : "❌ BLOQUÉ\n(autre namespace)"
+
+' Test d'isolation (sonde curl)
+component "Pod probe\n(kubectl run)" as probe <<Test>>
+note bottom of probe
+    Test exécuté pour valider:
+    kubectl run probe -n project-bob-test \
+      --image=localhost:5000/curl:latest \
+      -- curl http://my-api.project-alice-memoire.svc
+    
+    Résultat attendu: Connection timeout
+end note
+
+probe -[#red,bold]-> alice_port1 : "❌ BLOQUÉ"
+
+legend right
+    |<#green> ✅ | Trafic autorisé par la NetworkPolicy |
+    |<#red> ❌ | Trafic bloqué par la NetworkPolicy |
+    
+    **Règles d'isolation:**
+    1. Chaque namespace a sa propre NetworkPolicy
+    2. Par défaut, tout est bloqué (deny-all implicite)
+    3. Ingress autorisé depuis:
+       - Pods du même namespace
+       - Pods de kube-system (Traefik)
+    4. Egress non restreint (accès Internet OK)
+    
+    **Sécurité:**
+    - Bob ne peut pas accéder aux données d'Alice
+    - Charlie ne peut pas accéder aux données de Bob
+    - Traefik peut router vers tous les namespaces
+    - Les pods peuvent sortir vers Internet
+endlegend
+
+@enduml

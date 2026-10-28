@@ -1,0 +1,98 @@
+@startuml architecture-globale
+!define AWSPUML https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/v18.0/dist
+!include AWSPUML/AWSCommon.puml
+!include AWSPUML/NetworkingContentDelivery/VPC.puml
+!include AWSPUML/Compute/EC2.puml
+!include AWSPUML/NetworkingContentDelivery/ElasticIPAddress.puml
+!include AWSPUML/SecurityIdentityCompliance/SecurityGroup.puml
+!include AWSPUML/NetworkingContentDelivery/InternetGateway.puml
+
+title Architecture Globale GANDAL PaaS sur AWS
+
+skinparam linetype ortho
+skinparam rectangle {
+    BackgroundColor<<k3s>> lightblue
+    BackgroundColor<<registry>> lightyellow
+    BackgroundColor<<app>> lightgreen
+}
+
+package "Internet" {
+    actor "Utilisateur" as user
+    actor "Administrateur\n(CloudShell)" as admin
+}
+
+package "AWS eu-north-1" {
+    VPC(vpc, "VPC GANDAL", "10.0.0.0/16") {
+        InternetGateway(igw, "Internet Gateway", "")
+        
+        package "Sous-réseau public\n10.0.0.0/24" {
+            SecurityGroup(sg, "Security Group", "gandal-paas-sg") {
+                note right
+                    Port 22: SSH (IP restreinte)
+                    Port 80: HTTP (public)
+                    Port 443: HTTPS (prévu)
+                    Port 6443: API K8s (IP restreinte)
+                end note
+            }
+            
+            ElasticIPAddress(eip, "Elastic IP", "16.170.20.250")
+            
+            EC2(ec2, "Instance EC2", "m7i-flex.large\n2 vCPU / 8 Go RAM\n30 Go gp3") {
+                rectangle "Ubuntu 24.04 LTS" as os {
+                    rectangle "Docker" as docker
+                    
+                    rectangle "K3s v1.36.5" <<k3s>> as k3s {
+                        rectangle "Traefik Ingress" as traefik
+                        rectangle "CoreDNS" as coredns
+                        rectangle "metrics-server" as metrics
+                        
+                        package "Namespace: gandal-system" {
+                            rectangle "Registry privé\nlocalhost:5000" <<registry>> as registry
+                        }
+                        
+                        package "Namespace: project-alice-memoire" {
+                            rectangle "Deployment my-api\n2 réplicas nginx" <<app>> as app_alice
+                            rectangle "Service ClusterIP" as svc_alice
+                            rectangle "Ingress\nmy-api-memoire-alice\n.16.170.20.250.sslip.io" as ing_alice
+                        }
+                        
+                        package "Namespace: project-bob-test" {
+                            rectangle "Deployment web\n2 réplicas" <<app>> as app_bob
+                            rectangle "Service ClusterIP" as svc_bob
+                            rectangle "Ingress\nweb-test-bob\n.16.170.20.250.sslip.io" as ing_bob
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+package "DNS Public" {
+    cloud "sslip.io" as sslip {
+        note right
+            DNS wildcard automatique
+            *.16.170.20.250.sslip.io
+            résout vers 16.170.20.250
+        end note
+    }
+}
+
+' Connexions réseau
+user -down-> sslip : "Résolution DNS"
+sslip -down-> eip : "Requête HTTP"
+eip -down-> ec2
+admin -down-> sg : "SSH / kubectl"
+ec2 -up-> igw : "Pull images Docker"
+
+' Flux interne K3s
+traefik -down-> ing_alice
+traefik -down-> ing_bob
+ing_alice -down-> svc_alice
+ing_bob -down-> svc_bob
+svc_alice -down-> app_alice
+svc_bob -down-> app_bob
+app_alice -up-> registry : "Pull image\nlocalhost:5000/my-api:v1"
+app_bob -up-> registry : "Pull image"
+
+@enduml

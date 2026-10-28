@@ -1,0 +1,168 @@
+@startuml flux-deploiement
+!theme plain
+title Flux de déploiement d'une application
+
+actor "Administrateur" as admin
+participant "gandal_deploy.py" as script
+participant "API Kubernetes" as api
+database "etcd" as etcd
+participant "Scheduler" as scheduler
+participant "Kubelet" as kubelet
+participant "Containerd" as containerd
+participant "Registry\nlocalhost:5000" as registry
+
+== Phase 1 : Création du namespace ==
+
+admin -> script : python gandal_deploy.py deploy\nalice memoire my-api\nlocalhost:5000/my-api:v1 80
+activate script
+
+script -> api : GET /api/v1/namespaces/project-alice-memoire
+api -> etcd : Read namespace
+etcd --> api : 404 Not Found
+api --> script : 404 Not Found
+
+script -> api : POST /api/v1/namespaces\n(name: project-alice-memoire\nlabels: gandal.io/owner=alice)
+api -> etcd : Create namespace
+etcd --> api : Created
+api --> script : 201 Created
+
+note right
+    Le namespace isole
+    les ressources du projet
+end note
+
+== Phase 2 : Configuration des limites ==
+
+script -> api : POST /api/v1/namespaces/.../limitranges\n(name: default-limits)
+api -> etcd : Create LimitRange
+note right
+    Valeurs par défaut:
+    - cpu: 500m / memory: 512Mi
+    - requests: 100m / 128Mi
+end note
+
+script -> api : POST /api/v1/namespaces/.../resourcequotas\n(name: project-quota)
+api -> etcd : Create ResourceQuota
+note right
+    Plafonds projet:
+    - pods: 4
+    - cpu: 2 / memory: 2Gi
+end note
+
+== Phase 3 : Isolation réseau ==
+
+script -> api : POST /api/v1/namespaces/.../networkpolicies\n(name: isolate-ingress)
+api -> etcd : Create NetworkPolicy
+note right
+    Règles:
+    - Ingress depuis même NS
+    - Ingress depuis kube-system
+    - Bloque le reste
+end note
+
+== Phase 4 : Création du Deployment ==
+
+script -> api : POST /apis/apps/v1/namespaces/.../deployments\n(name: my-api, replicas: 2,\nimage: localhost:5000/my-api:v1)
+api -> etcd : Create Deployment
+etcd --> api : Created
+api --> script : 201 Created
+
+api -> scheduler : Watch: 2 pods Pending
+activate scheduler
+
+scheduler -> api : Bind pod my-api-xxx1 to node
+scheduler -> api : Bind pod my-api-xxx2 to node
+deactivate scheduler
+
+== Phase 5 : Démarrage des pods ==
+
+api -> kubelet : Create pod my-api-xxx1
+activate kubelet
+
+kubelet -> containerd : Pull image localhost:5000/my-api:v1
+activate containerd
+
+containerd -> registry : GET /v2/my-api/manifests/v1
+registry --> containerd : Image manifest
+
+containerd -> registry : GET /v2/my-api/blobs/sha256:...
+registry --> containerd : Image layers
+
+containerd -> containerd : Extract layers
+deactivate containerd
+
+kubelet -> containerd : Create container
+containerd --> kubelet : Container created
+
+kubelet -> kubelet : Start container
+kubelet -> kubelet : Execute readinessProbe\n(tcpSocket:80)
+
+kubelet -> api : Update pod status: Running + Ready
+deactivate kubelet
+
+note right
+    Même processus pour
+    le pod my-api-xxx2
+end note
+
+== Phase 6 : Création du Service ==
+
+script -> api : POST /api/v1/namespaces/.../services\n(name: my-api, selector: gandal.io/app=my-api,\nport: 80)
+api -> etcd : Create Service
+note right
+    ClusterIP attribuée (ex: 10.43.5.10)
+    Endpoints: [10.42.0.11:80, 10.42.0.12:80]
+end note
+
+== Phase 7 : Création de l'Ingress ==
+
+script -> api : POST /apis/networking.k8s.io/v1/namespaces/.../ingresses\n(name: my-api,\nhost: my-api-memoire-alice.16.170.20.250.sslip.io)
+api -> etcd : Create Ingress
+etcd --> api : Created
+
+api -> "Traefik" : Watch: New Ingress
+activate "Traefik"
+"Traefik" -> api : Read Service my-api endpoints
+"Traefik" -> "Traefik" : Configure route\nHost → Backend 10.43.5.10:80
+deactivate "Traefik"
+
+note right
+    Traefik met à jour
+    sa configuration
+    dynamiquement
+end note
+
+== Phase 8 : Vérification ==
+
+script -> api : GET /api/v1/namespaces/.../pods?labelSelector=gandal.io/app=my-api
+api -> etcd : List pods
+etcd --> api : 2 pods Running
+api --> script : Pod list
+
+script -> script : Wait for Ready (max 60s)
+script -> api : GET pod status (every 2s)
+api --> script : 2/2 Ready
+
+script --> admin : ✅ Déploiement réussi\nURL: http://my-api-memoire-alice.16.170.20.250.sslip.io
+
+deactivate script
+
+== Phase 9 : Premier accès utilisateur ==
+
+actor "Client HTTP" as client
+client -> "Traefik" : GET / HTTP/1.1\nHost: my-api-memoire-alice.16.170.20.250.sslip.io
+activate "Traefik"
+
+"Traefik" -> "Traefik" : Lookup route by Host
+"Traefik" -> "Service my-api" : Forward to 10.43.5.10:80
+"Service my-api" -> "Service my-api" : Load balance (round-robin)
+"Service my-api" -> "Pod my-api-xxx1" : Forward to 10.42.0.11:80
+
+"Pod my-api-xxx1" -> "Pod my-api-xxx1" : nginx handle request
+"Pod my-api-xxx1" --> "Service my-api" : HTTP 200 + HTML
+"Service my-api" --> "Traefik" : HTTP 200 + HTML
+"Traefik" --> client : HTTP 200 + HTML
+
+deactivate "Traefik"
+
+@enduml
