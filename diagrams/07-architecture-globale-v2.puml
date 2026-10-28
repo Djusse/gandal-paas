@@ -1,0 +1,66 @@
+@startuml
+title Architecture AWS - Infrastructure complete
+
+actor Utilisateur as user
+cloud "DNS sslip.io" as dns
+
+package "AWS Region eu-north-1" {
+  
+  rectangle "VPC 10.0.0.0/16" {
+    
+    rectangle "Internet Gateway" as igw
+    
+    rectangle "Subnet Public 10.0.0.0/24" {
+      
+      rectangle "Security Group" as sg {
+        note right
+          Port 22: SSH (restreint)
+          Port 80: HTTP (public)
+          Port 443: HTTPS (prevu)
+          Port 6443: API K8s (restreint)
+        end note
+      }
+      
+      rectangle "Elastic IP\n16.170.20.250" as eip #lightblue
+      
+      rectangle "EC2 Instance\nm7i-flex.large\n2 vCPU / 8 Go" as ec2 #orange {
+        
+        rectangle "Ubuntu 24.04" as os {
+          
+          rectangle "Docker" as docker
+          
+          rectangle "K3s Cluster" as k3s #lightblue {
+            
+            rectangle "Traefik" as traefik
+            rectangle "CoreDNS" as coredns
+            rectangle "metrics-server" as metrics
+            
+            frame "gandal-system" {
+              rectangle "Registry\nlocalhost:5000" as registry #yellow
+            }
+            
+            frame "project-alice-memoire" {
+              rectangle "nginx pods x2" as pods_alice #lightgreen
+              rectangle "Service + Ingress" as ing_alice
+            }
+            
+            frame "project-bob-test" {
+              rectangle "web pods x2" as pods_bob #lightgreen
+              rectangle "Service + Ingress" as ing_bob
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+user --> dns : 1. DNS query
+dns --> eip : 2. Resolves IP
+eip --> ec2 : 3. HTTP request
+traefik --> ing_alice : 4. Route to Alice
+traefik --> ing_bob : 4. Route to Bob
+ing_alice --> pods_alice
+ing_bob --> pods_bob
+
+@enduml

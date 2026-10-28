@@ -1,0 +1,67 @@
+@startuml
+title K3s - Composants et Namespaces
+
+package "K3s Single Node Cluster" {
+  
+  frame "Control Plane" #lightblue {
+    [API Server :6443]
+    [Scheduler]
+    [Controller Manager]
+    [etcd (SQLite)]
+  }
+  
+  frame "Worker (same node)" #lightblue {
+    [Kubelet]
+    [Containerd]
+    [CNI Flannel 10.42.0.0/16]
+  }
+  
+  frame "kube-system namespace" #lightyellow {
+    [Traefik Ingress :80]
+    [CoreDNS :53]
+    [metrics-server]
+    [local-path provisioner]
+  }
+  
+  frame "gandal-system namespace" #lightyellow {
+    [Registry Pod\nlocalhost:5000]
+    database "PVC 10Gi" as pvc1
+    [Registry Pod\nlocalhost:5000] --> pvc1
+  }
+  
+  frame "project-alice-memoire" #lightgreen {
+    rectangle "ResourceQuota\n4 pods, 2 CPU, 2Gi RAM" as quota_a
+    rectangle "NetworkPolicy\nIsolation" as netpol_a
+    [Pod my-api-1\n10.42.0.11] as pod_a1
+    [Pod my-api-2\n10.42.0.12] as pod_a2
+    [Service ClusterIP\n10.43.x.x] as svc_a
+    [Ingress HTTP] as ing_a
+  }
+  
+  frame "project-bob-test" #lightcyan {
+    rectangle "ResourceQuota" as quota_b
+    rectangle "NetworkPolicy" as netpol_b
+    [Pod web-1\n10.42.0.21] as pod_b1
+    [Pod web-2\n10.42.0.22] as pod_b2
+    [Service ClusterIP] as svc_b
+    [Ingress HTTP] as ing_b
+  }
+}
+
+svc_a --> pod_a1
+svc_a --> pod_a2
+ing_a --> svc_a
+
+svc_b --> pod_b1
+svc_b --> pod_b2
+ing_b --> svc_b
+
+[Traefik Ingress :80] ..> ing_a
+[Traefik Ingress :80] ..> ing_b
+
+note bottom of netpol_a
+  Bloque acces depuis
+  project-bob-test
+end note
+
+@enduml

@@ -1,0 +1,78 @@
+@startuml
+title Quotas ResourceQuota - Scenario Scale Up
+
+participant Admin
+participant "kubectl" as kubectl
+participant "Deployment\nController" as deployment
+participant "Admission\nController" as admission
+database "ResourceQuota\nhard:\n  pods: 4\n  requests.cpu: 1\n  requests.memory: 1Gi" as quota
+participant Kubelet
+
+== Etat Initial: 2 replicas ==
+
+Admin -> kubectl : Initial deploy\n--replicas=2
+kubectl -> deployment : Create Deployment
+deployment -> admission : Request create pod1
+admission -> quota : Check quota usage
+quota --> admission : 1/4 pods\n100m/1 CPU\n128Mi/1Gi RAM\nOK
+admission --> deployment : Pod1 APPROVED
+deployment -> Kubelet : Schedule pod1
+
+deployment -> admission : Request create pod2
+admission -> quota : Check quota
+quota --> admission : 2/4 pods OK
+admission --> deployment : Pod2 APPROVED
+deployment -> Kubelet : Schedule pod2
+
+note right
+  Etat actuel:
+  2 pods Running
+  200m CPU / 256Mi RAM utilises
+end note
+
+== Tentative Scale Up: 10 replicas ==
+
+Admin -> kubectl : kubectl scale\n--replicas=10
+kubectl -> deployment : Update desired replicas
+deployment -> deployment : Need 8 more pods
+
+deployment -> admission : Request create pod3
+admission -> quota : Check: 3/4 pods
+admission --> deployment : Pod3 APPROVED
+
+deployment -> admission : Request create pod4
+admission -> quota : Check: 4/4 pods\nLIMIT REACHED
+admission --> deployment : Pod4 APPROVED (last one)
+
+deployment -> admission : Request create pod5
+admission -> quota : Check: would be 5/4\nEXCEEDED
+quota -[#red]-> admission : QUOTA EXCEEDED
+admission -[#red]-> deployment : Pod5 REJECTED
+
+deployment -> admission : Request create pod6-10
+admission -[#red]-> deployment : All REJECTED\nQuota exceeded
+
+note right of deployment
+  Event created:
+  Type: Warning
+  Reason: FailedCreate
+  Message: exceeded quota: project-quota
+end note
+
+== Etat Final ==
+
+Admin -> kubectl : kubectl get deployment
+kubectl --> Admin : spec.replicas: 10\nstatus.replicas: 4\nstatus.readyReplicas: 4
+
+Admin -> kubectl : kubectl get events
+kubectl --> Admin : Warning FailedCreate\nexceeded quota: project-quota
+
+note over Admin,quota
+  RESULTAT:
+  - Demande: 10 pods
+  - Crees: 4 pods (limite quota)
+  - Etat desire vs reel: mismatch OK
+  - Cluster protege contre surconsommation
+end note
+
+@enduml

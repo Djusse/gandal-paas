@@ -1,0 +1,51 @@
+@startuml
+title Deploiement Application - Sequence Complete
+
+actor Admin
+participant "gandal_deploy.py" as script
+participant "API Kubernetes" as api
+database etcd
+participant Scheduler
+participant Kubelet
+participant Containerd
+participant Registry
+
+== Phase 1: Namespace ==
+Admin -> script : python gandal_deploy.py deploy\nalice memoire my-api ...
+script -> api : Create Namespace\nproject-alice-memoire
+api -> etcd : Store namespace
+
+== Phase 2-4: Gouvernance ==
+script -> api : Create LimitRange\n(default: 500m CPU, 512Mi RAM)
+script -> api : Create ResourceQuota\n(4 pods, 2 CPU, 2Gi RAM)
+script -> api : Create NetworkPolicy\n(isolation)
+
+== Phase 5: Deployment ==
+script -> api : Create Deployment\n(replicas: 2, image: localhost:5000/my-api:v1)
+api -> Scheduler : Schedule 2 pods
+Scheduler -> Kubelet : Assign pod1 to node
+Scheduler -> Kubelet : Assign pod2 to node
+
+== Phase 6: Pull Image ==
+Kubelet -> Containerd : Pull image
+Containerd -> Registry : GET localhost:5000/my-api:v1
+Registry --> Containerd : Image layers
+Containerd -> Containerd : Extract and prepare
+
+== Phase 7: Start Pods ==
+Kubelet -> Containerd : Create containers
+Containerd --> Kubelet : Containers started
+Kubelet -> Kubelet : Execute readinessProbe\n(tcpSocket:80)
+Kubelet -> api : Update pod status: Running + Ready
+
+== Phase 8-9: Service + Ingress ==
+script -> api : Create Service\n(ClusterIP, port 80)
+script -> api : Create Ingress\n(host: my-api-memoire-alice.16.170.20.250.sslip.io)
+
+== Phase 10: Verification ==
+script -> api : Wait for Ready condition
+api --> script : 2/2 pods Ready
+
+script --> Admin : Success!\nURL: http://my-api-memoire-alice.16.170.20.250.sslip.io
+
+@enduml

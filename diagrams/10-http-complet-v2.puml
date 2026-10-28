@@ -1,0 +1,69 @@
+@startuml
+title Flux HTTP Complet - Client vers Pod
+
+actor Client
+participant "DNS sslip.io" as dns
+participant "Elastic IP\n16.170.20.250" as eip
+participant "Security Group" as sg
+participant "Traefik\nIngress Controller" as traefik
+participant "CoreDNS" as coredns
+participant "Service my-api\nClusterIP 10.43.5.10" as service
+participant "Pod my-api-1\n10.42.0.11" as pod1
+participant "Pod my-api-2\n10.42.0.12" as pod2
+
+== Etape 1-2: Resolution DNS ==
+Client -> dns : DNS Query\nmy-api-memoire-alice.16.170.20.250.sslip.io
+dns -> dns : Parse embedded IP\nfrom hostname
+dns --> Client : A record: 16.170.20.250
+
+== Etape 3-4: Connexion TCP ==
+Client -> eip : TCP SYN port 80
+eip -> sg : Check rules
+sg -> sg : Port 80 from 0.0.0.0/0\nALLOWED
+sg -> traefik : Forward to :80
+
+== Etape 5: Requete HTTP ==
+Client -> traefik : GET / HTTP/1.1\nHost: my-api-memoire-alice...
+
+== Etape 6: Routing Traefik ==
+traefik -> traefik : Lookup route table\nby Host header
+note right
+  Route found:
+  Host: my-api-memoire-alice...
+  Backend: my-api.project-alice-memoire.svc:80
+end note
+
+== Etape 7: Resolution Service DNS ==
+traefik -> coredns : DNS Query\nmy-api.project-alice-memoire.svc.cluster.local
+coredns --> traefik : A record: 10.43.5.10
+
+== Etape 8: Appel Service ==
+traefik -> service : GET / to 10.43.5.10:80
+
+== Etape 9: Load Balancing ==
+service -> service : Round-robin selection
+note right
+  Endpoints:
+  - 10.42.0.11:80 (pod1)
+  - 10.42.0.12:80 (pod2)
+  Choice: pod1 this time
+end note
+service -> pod1 : Forward to 10.42.0.11:80
+
+== Etape 10: Traitement nginx ==
+pod1 -> pod1 : nginx reads\n/usr/share/nginx/html/index.html
+pod1 --> service : HTTP 200 OK\nContent-Type: text/html\n\n<!DOCTYPE html>...
+
+== Etape 11: Reponse ==
+service --> traefik : HTTP 200 + HTML
+traefik --> eip : HTTP 200 + HTML
+eip --> Client : HTTP 200 + HTML
+
+Client -> Client : Render page
+
+note over Client,pod2
+  Requete suivante:
+  round-robin will choose pod2
+end note
+
+@enduml

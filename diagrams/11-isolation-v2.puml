@@ -1,0 +1,68 @@
+@startuml
+title Isolation Reseau - NetworkPolicy
+
+package "K3s Cluster Network" {
+  
+  package "kube-system" {
+    component "Traefik\n10.42.0.5" as traefik <<Ingress>>
+  }
+  
+  package "project-alice-memoire" {
+    
+    rectangle "NetworkPolicy\nisolate-ingress" as netpol_alice {
+      note right
+        podSelector: {}
+        policyTypes: [Ingress]
+        ingress:
+        - from:
+          - podSelector: {}
+            (same namespace)
+        - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name:
+                  kube-system
+      end note
+    }
+    
+    component "Pod my-api-1\n10.42.0.11" as alice1 #lightgreen
+    component "Pod my-api-2\n10.42.0.12" as alice2 #lightgreen
+    component "Service my-api\n10.43.5.10" as alice_svc
+  }
+  
+  package "project-bob-test" {
+    rectangle "NetworkPolicy" as netpol_bob
+    component "Pod web-1\n10.42.0.21" as bob1 #lightcyan
+    component "Pod web-2\n10.42.0.22" as bob2 #lightcyan
+  }
+}
+
+' Flux autorises (vert)
+traefik -[#green,thickness=3]-> alice1 : AUTORISE\n(from kube-system)
+alice1 -[#green,thickness=3]-> alice2 : AUTORISE\n(same namespace)
+alice_svc -[#green,thickness=3]-> alice1
+alice_svc -[#green,thickness=3]-> alice2
+
+' Flux bloques (rouge)
+bob1 -[#red,thickness=3]-> alice1 : BLOQUE\n(NetworkPolicy)
+bob2 -[#red,thickness=3]-> alice2 : BLOQUE
+bob1 -[#red,thickness=3]-> alice_svc : BLOQUE
+
+legend right
+  |<#green> Ligne verte | Trafic AUTORISE |
+  |<#red> Ligne rouge | Trafic BLOQUE |
+  
+  Regles NetworkPolicy:
+  1. Meme namespace: OK
+  2. kube-system: OK (Traefik)
+  3. Autres namespaces: BLOQUE
+  
+  Test de validation:
+  kubectl run probe -n project-bob-test \
+    --image=curl \
+    -- curl http://my-api.project-alice-memoire.svc
+  
+  Resultat: Connection timeout (BLOQUE)
+endlegend
+
+@enduml
