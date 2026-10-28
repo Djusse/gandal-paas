@@ -15,8 +15,8 @@ export GANDAL_BASE_DOMAIN="${ELASTIC_IP}.sslip.io"
 source ~/gandal-venv/bin/activate
 
 echo "==> Variables d'environnement :"
-echo "    GANDAL_BASE_DOMAIN=$GANDAL_BASE_DOMAIN"
-echo "    KUBECONFIG=$KUBECONFIG"
+echo "    GANDAL_BASE_DOMAIN=\$GANDAL_BASE_DOMAIN"
+echo "    KUBECONFIG=\$KUBECONFIG"
 
 echo ""
 echo "==> Déploiement d'Alice/memoire/my-api"
