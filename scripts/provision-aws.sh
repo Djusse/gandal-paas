@@ -6,21 +6,40 @@
 #
 # "up" cree : VPC 10.0.0.0/16, sous-reseau public, IGW, table de route,
 # Security Group (22/6443 restreints, 80/443 ouverts), paire de cles importee,
-# instance t3.large Ubuntu 24.04 avec 60 Go gp3, et Elastic IP associee.
+# une instance Ubuntu 24.04, et une Elastic IP associee.
 # "down" supprime tout ce qui a ete cree.
 #
+# COMPTE FREE TIER : les types eligibles sont generalement
+#   m7i-flex.large  2 vCPU / 8 Go   <- recommande (equivalent du t3.large)
+#   c7i-flex.large  2 vCPU / 4 Go   <- acceptable, sans marge
+#   t3.micro        2 vCPU / 1 Go   <- trop juste pour K3s + registry
+# Surcharger au besoin :
+#   INSTANCE_TYPE=m7i-flex.large VOLUME_SIZE=30 ./provision-aws.sh up ...
+#
 # Prerequis : AWS CLI configuree (CloudShell l'a par defaut).
-# La cle publique se cree sur VOTRE PC avec :
-#   ssh-keygen -t ed25519 -f ~/.ssh/gandal -C gandal-paas
 set -euo pipefail
 
 NAME="${NAME:-gandal-paas}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-eu-west-3}}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-m7i-flex.large}"
+VOLUME_SIZE="${VOLUME_SIZE:-30}"
 STATE="$HOME/.${NAME}-state.sh"
 ACTION="${1:-up}"
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 warn() { printf '\033[33m    %s\033[0m\n' "$1"; }
+
+case "$INSTANCE_TYPE" in
+  t3.micro|t4g.micro|t2.micro)
+    warn "ATTENTION : $INSTANCE_TYPE n'a que 1 Go de RAM."
+    warn "K3s + registry + 2 replicas nginx tiennent difficilement ;"
+    warn "install.sh ajoutera du swap, mais les tests seront lents."
+    ;;
+  c7i-flex.large)
+    warn "$INSTANCE_TYPE : 4 Go de RAM. Suffisant, mais peu de marge"
+    warn "pour les tests de quota (prevoir GANDAL_QUOTA_LIM_MEM=1Gi)."
+    ;;
+esac
 
 aws_() { aws --region "$REGION" "$@"; }
 
@@ -136,15 +155,15 @@ fi
 echo "    AMI          : $AMI_ID"
 
 # ---------------------------------------------------------------- instance
-say "Creation de l'instance t3.large (60 Go gp3)"
+say "Creation de l'instance $INSTANCE_TYPE (${VOLUME_SIZE} Go gp3)"
 INSTANCE_ID=$(aws_ ec2 run-instances \
   --image-id "$AMI_ID" \
-  --instance-type t3.large \
+  --instance-type "$INSTANCE_TYPE" \
   --key-name "$NAME" \
   --security-group-ids "$SG_ID" \
   --subnet-id "$SUBNET_ID" \
   --block-device-mappings \
-    '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":60,"VolumeType":"gp3","DeleteOnTermination":true}}]' \
+    "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${VOLUME_SIZE},\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]" \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME}]" \
   --query 'Instances[0].InstanceId' --output text)
 echo "    Instance     : $INSTANCE_ID"
@@ -171,12 +190,15 @@ SG_ID=$SG_ID
 INSTANCE_ID=$INSTANCE_ID
 ALLOC_ID=$ALLOC_ID
 PUBLIC_IP=$PUBLIC_IP
+INSTANCE_TYPE=$INSTANCE_TYPE
+VOLUME_SIZE=$VOLUME_SIZE
 EOF
 
 say "Termine"
 cat <<EOF
 
     Elastic IP   : $PUBLIC_IP
+    Instance     : $INSTANCE_TYPE / ${VOLUME_SIZE} Go gp3
     Utilisateur  : ubuntu
     Cle privee   : celle creee sur votre PC (~/.ssh/gandal)
 

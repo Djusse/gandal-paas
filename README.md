@@ -30,6 +30,29 @@ Deux passes sont nécessaires pour la table des matières.
 
 ## Phase 1 — Provisionner l'instance AWS
 
+### Types d'instance compatibles free tier
+
+| Type | vCPU | RAM | Verdict |
+|---|---|---|---|
+| `m7i-flex.large` | 2 | 8 Go | **Recommandé** — équivalent du `t3.large` de la doc |
+| `c7i-flex.large` | 2 | 4 Go | Acceptable, peu de marge ; baisser les quotas |
+| `t3.micro` | 2 | 1 Go | Trop juste pour K3s + registry + 2 réplicas |
+
+Le script utilise `m7i-flex.large` par défaut. Surcharge possible :
+
+```bash
+INSTANCE_TYPE=c7i-flex.large VOLUME_SIZE=30 ./provision-aws.sh up ~/gandal.pub
+```
+
+Si l'instance a moins de 6 Go de RAM, [`install.sh`](install.sh:26) ajoute
+automatiquement 2 Go de swap pour éviter les OOM-kill.
+
+En 4 Go, réduire aussi les quotas au déploiement :
+
+```bash
+export GANDAL_QUOTA_REQ_MEM=512Mi GANDAL_QUOTA_LIM_MEM=1Gi
+```
+
 ### Option A : script automatique (CloudShell)
 
 Sur votre PC, créer une paire de clés :

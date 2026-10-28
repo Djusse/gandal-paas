@@ -23,6 +23,24 @@ sudo systemctl enable --now docker
 # ou 'newgrp docker' dans la session courante.
 sudo usermod -aG docker "$USER"
 
+# ---------------------------------------------------------------- swap
+# Une instance de 1 ou 4 Go peut manquer de memoire pour K3s + registry.
+# Un swap de 2 Go evite les OOM-kill sans changer le comportement du cluster.
+if [ "$(free -m | awk '/^Mem:/{print $2}')" -lt 6000 ]; then
+  if ! swapon --show | grep -q .; then
+    echo "==> Memoire insuffisante : ajout de 2 Go de swap"
+    sudo fallocate -l 2G /swapfile 2>/dev/null || \
+      sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile >/dev/null
+    sudo swapon /swapfile
+    grep -q '/swapfile' /etc/fstab || \
+      echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+  fi
+  # K3s tolere mieux la pression memoire avec un seuil bas.
+  echo "    RAM : $(free -h | awk '/^Mem:/{print $2}') + $(free -h | awk '/^Swap:/{print $2}') de swap"
+fi
+
 echo "==> Configuration du registry pour K3s (HTTP sur localhost:5000)"
 sudo mkdir -p /etc/rancher/k3s
 sudo tee /etc/rancher/k3s/registries.yaml >/dev/null <<'EOF'
