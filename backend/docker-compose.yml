@@ -1,10 +1,12 @@
 services:
   db:
-    image: postgres:16
+    image: postgres:16-alpine
+    container_name: paas-db
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: paas
-      POSTGRES_PASSWORD: paas
-      POSTGRES_DB: paas
+      POSTGRES_USER: ${POSTGRES_USER:-paas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paas}
+      POSTGRES_DB: ${POSTGRES_DB:-paas}
     ports:
       - '5432:5432'
     volumes:
@@ -16,16 +18,28 @@ services:
       retries: 5
 
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: paas-api
+    restart: unless-stopped
     ports:
       - '8000:8000'
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - DATABASE_URL=postgresql+psycopg://paas:paas@db:5432/paas
+      - GITLAB_MODE=${GITLAB_MODE:-fake}
+      - ORCHESTRATOR_MODE=${ORCHESTRATOR_MODE:-mock}
+      - AUTH_MODE=${AUTH_MODE:-dev}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-change-me-long-random}
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:-change-me-long-random}
+      - WEBHOOK_PUBLIC_URL=${WEBHOOK_PUBLIC_URL:-http://localhost:8000}
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
-  pgdata: {}
+  pgdata:
+    name: paas-pgdata

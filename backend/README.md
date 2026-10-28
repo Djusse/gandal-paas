@@ -1,255 +1,275 @@
-# GANDAL PaaS Backend (FastAPI)
+# GANDAL PaaS — Service Backend & Orchestrateur d'Intégration
 
-> **Central Control Plane for GANDAL PaaS**: Connects the Developer Portal, private GitLab, CI/CD Container Registry, and the Kubernetes Deployment Orchestrator.
+Ce dépôt héberge le **service Backend du PaaS GANDAL** (*Platform as a Service* universitaire). Conçu selon les principes de l'**Architecture Hexagonale (Ports et Adaptateurs)**, il agit comme la tour de contrôle centrale reliant le **Portail Étudiant**, l'instance **GitLab & Registry**, le moteur **CI/CD Kaniko**, et l'**Orchestrateur Kubernetes**.
 
 ---
 
-## 1. Simple Terms: How Does It Work?
+## 1. Vue d'Ensemble & Fonctionnement du PaaS
 
-Imagine you are running a university cloud platform (PaaS) where students write code, and the platform runs it on a cluster automatically without students needing to learn Kubernetes or CI pipelines.
+Le système permet aux étudiants de déployer leurs applications conteneurisées dans des environnements Kubernetes isolés via une expérience inspirée de Heroku ou Render :
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Student as Student / Dev Portal
-    participant API as PaaS Backend (Our Service)
-    participant GitLab as Private GitLab
-    participant Runner as CI/CD Runner VM
-    participant Registry as Container Registry
-    participant Orch as K8s Orchestrator
-
-    Student->>API: 1. POST /projects {"name": "my-app"}
-    API->>GitLab: 2. Create empty repo & register pipeline webhook & shared CI template
-    API-->>Student: 3. Return repo_url (Status: awaiting_push)
-    
-    Student->>GitLab: 4. git push origin main
-    GitLab->>Runner: 5. Trigger shared CI build (Kaniko)
-    GitLab->>API: 6. Webhook: Pipeline 'running' (Status: building)
-    Runner->>Registry: 7. Build container image & push (tag = git commit short SHA)
-    GitLab->>API: 8. Webhook: Pipeline 'success' (Status: built)
-    
-    API->>Registry: 9. Locate image & immutable digest
-    API->>Orch: 10. POST /deployments (project, image, port, replicas)
-    Note over API: Status: deploying
-    Orch->>API: 11. Callback /internal/deployments/{id}/status (deployed, URL)
-    Note over API: Status: deployed
-    Student->>API: 12. GET /projects/{id} -> Sees app URL!
+```
+[Portail Étudiant]  <--->  [PaaS Backend]  <--->  [GitLab & Registry]
+                                 |
+                                 v
+                     [Orchestrateur Kubernetes]  --->  Application en ligne
 ```
 
-### The 4 Core Actors
-1. **The Student (Developer Portal)**:
-   - Asks for a project name (e.g. `my-app`).
-   - Receives an empty Git repository URL.
-   - Pushes code (`git push origin main`).
-   - Watches progress in the portal (`awaiting_push` ➔ `building` ➔ `deploying` ➔ `deployed`).
-2. **GitLab & CI/CD**:
-   - The student pushes code.
-   - A shared CI template (`templates/build.yml@paas/ci-templates`) runs on a dedicated runner VM using Kaniko (no Docker socket mounted for tenant security).
-   - Once the image is built and pushed to the container registry, GitLab fires a webhook to our PaaS backend.
-3. **PaaS Backend (This Repository)**:
-   - The "brain" and coordinator.
-   - Manages metadata in PostgreSQL (projects, pipeline events, images, deployments).
-   - Listens to webhooks securely with idempotent deduplication.
-   - Looks up the built image digest in the registry.
-   - Instructs the Orchestrator to deploy.
-4. **Kubernetes Orchestrator**:
-   - Deploys the container to the student's isolated Kubernetes namespace (`proj-{name}`).
-   - Sets up Kubernetes Service, Ingress / Gateway API route, and DNS.
-   - Calls our Backend callback with the live public URL (`http://{name}.apps.gandal.local`).
+### Les 4 Acteurs Clés du Système
+1. **L'Étudiant (Portail Développeur)** :
+   - Crée son projet via l'interface (ex: `mon-application`).
+   - Reçoit immédiatement l'URL d'un dépôt Git vierge dédié.
+   - Pousse son code (`git push origin main`).
+   - Suit en temps réel l'évolution du statut (`awaiting_push` → `building` → `deploying` → `deployed`).
+2. **GitLab & CI/CD** :
+   - Héberge le code source de l'étudiant.
+   - Déclenche un pipeline partagé (`templates/build.yml@paas/ci-templates`) exécuté sur un runner isolé avec **Kaniko** (aucun montage du socket Docker hôte pour garantir la sécurité multi-tenant).
+   - Envoie des webhooks sécurisés au backend lors des changements d'état du pipeline.
+3. **Le Backend PaaS (Ce Répertoire)** :
+   - Coordonne le cycle de vie complet.
+   - Enregistre et valide les métadonnées dans PostgreSQL (projets, événements de pipeline, images construites, déploiements).
+   - Valide les webhooks GitLab par signature HMAC et garantit l'idempotence des événements.
+   - Récupère le digest de l'image conteneur et ordonne le déploiement.
+4. **L'Orchestrateur Kubernetes** :
+   - Déploie le conteneur dans un namespace Kubernetes dédié et étanche (`proj-{nom}`).
+   - Configure le Service K8s, l'Ingress / Gateway API et le DNS local.
+   - Notifie le Backend PaaS avec l'URL publique finale (`http://{nom}.apps.gandal.local`).
 
 ---
 
-## 2. Ports and Adapters: Developing while other teams finish
+## 2. Architecture Hexagonale (Ports & Adaptateurs)
 
-The backend never talks directly to external systems inside business logic. All external integrations are defined as **Protocols (Ports)** with **swappable Adapters**:
+Afin de permettre un développement et des tests découplés des équipes d'infrastructure ou de GitLab, toute la logique métier s'appuie sur des interfaces abstraites (**Ports**) pouvant être associées à des **Adaptateurs** virtuels (fakes/mocks) ou réels :
 
-| Dependency | Owner | In Development | In Production | Switch Env Var |
+| Dépendance | Équipe Propriétaire | Mode Développement | Mode Production | Variable d'Environnement |
 |---|---|---|---|---|
-| **GitLab & Registry** | GitLab team | `GitLabFake` (in-memory) | `GitLabReal` (v4 REST API) | `GITLAB_MODE=fake\|real` |
-| **CI Runner & Template** | CI/CD team | `scripts/simulate_webhook.py` | Real GitLab Runner VM | *(none, push-driven)* |
-| **Orchestrator** | Orchestrator team | `OrchestratorMock` (async callback) | `OrchestratorReal` (HTTP POST) | `ORCHESTRATOR_MODE=mock\|real` |
-| **Authentication** | GitLab team | `X-Dev-User` dev header | GitLab OAuth Bearer token | `AUTH_MODE=dev\|oauth` |
-| **Kubernetes / Infra** | Infra team | Not queried (Orchestrator owns it)| Orchestrator handles K8s | *(none)* |
+| **GitLab & Registry** | Équipe GitLab | `GitLabFake` (en mémoire / simulation) | `GitLabReal` (API REST v4 GitLab) | `GITLAB_MODE=fake\|real` |
+| **Runner & Template CI** | Équipe CI/CD | `scripts/simulate_webhook.py` | Runner VM GitLab réel | *(déclenché par git push)* |
+| **Orchestrateur K8s** | Équipe Orchestrateur | `OrchestratorMock` (callback asynchrone) | `OrchestratorReal` (POST HTTP) | `ORCHESTRATOR_MODE=mock\|real` |
+| **Authentification** | Équipe GitLab / Auth | En-tête de dev `X-Dev-User` | Jeton Bearer OAuth GitLab | `AUTH_MODE=dev\|oauth` |
+| **Infrastructure K8s** | Équipe Infra | Non requise en dev | Gérée par l'Orchestrateur | *(transparent)* |
 
-Switching any component from fake to real requires **only changing an environment variable**, never touching business logic or routers!
+Le passage d'un environnement de mock au système réel en production se fait **uniquement par modification des variables d'environnement**, sans modifier la moindre ligne de code métier.
 
 ---
 
-## 3. Directory Structure
+## 3. Structure du Projet
 
 ```
 paas-backend/
 ├── app/
-│   ├── main.py                     # FastAPI application setup & routing
-│   ├── config.py                   # Pydantic Settings configuration & env loading
-│   ├── db.py                       # SQLAlchemy database engine & session dependency
-│   ├── models.py                   # ORM models (Project, PipelineEvent, Image, Deployment)
-│   ├── schemas.py                  # Pydantic request/response schemas & validation
-│   ├── ports.py                    # Protocols for GitLabPort and OrchestratorPort
-│   ├── deps.py                     # Dependencies & adapter injection (fake/real switches)
-│   ├── adapters/
-│   │   ├── gitlab_fake.py          # In-memory fake GitLab & Registry
-│   │   ├── gitlab_real.py          # Real GitLab v4 REST client
-│   │   ├── orchestrator_mock.py    # Mock Orchestrator simulating async K8s deploy
-│   │   └── orchestrator_real.py    # Real Orchestrator client (POST /deployments)
-│   ├── routers/
-│   │   ├── health.py               # GET /health
-│   │   ├── projects.py             # CRUD & user endpoints for projects
-│   │   ├── webhooks.py             # POST /webhooks/gitlab (HMAC-verified, deduplicated)
-│   │   └── internal.py             # POST /internal/deployments/{id}/status (token-protected)
-│   └── services/
-│       ├── project_service.py      # Project lifecycle & tenant authorization
-│       └── build_service.py        # Background task for registry lookup & deployment
-├── alembic/                        # Database migration scripts
+│   ├── adapters/                     # Implémentations concrètes des ports
+│   │   ├── gitlab_fake.py            # Simulation GitLab en mémoire
+│   │   ├── gitlab_real.py            # Client API REST GitLab v4 officiel
+│   │   ├── orchestrator_mock.py      # Mock simulant le déploiement K8s asynchrone
+│   │   └── orchestrator_real.py      # Client HTTP pour l'Orchestrateur réel
+│   ├── routers/                      # Contrôleurs HTTP FastAPI
+│   │   ├── health.py                 # GET /health (vérification de santé de l'API et de la DB)
+│   │   ├── projects.py               # CRUD projets, historique des builds, images et redéploiement
+│   │   ├── webhooks.py               # POST /webhooks/gitlab (vérification HMAC, déduplication)
+│   │   └── internal.py               # POST /internal/deployments/{id}/status (callback tokenisé)
+│   ├── services/                     # Logique métier & cas d'usage
+│   │   ├── project_service.py        # Gestion du cycle de vie des projets & autorisations
+│   │   └── build_service.py          # Tâches asynchrones (liaison SHA -> Image -> Déploiement)
+│   ├── config.py                     # Gestion des paramètres via Pydantic Settings
+│   ├── db.py                         # Configuration du moteur SQLAlchemy (Postgres / SQLite)
+│   ├── deps.py                       # Injection de dépendances FastAPI (Auth, Adaptateurs)
+│   ├── main.py                       # Point d'entrée de l'application FastAPI
+│   ├── models.py                     # Modèles ORM (Project, PipelineEvent, Image, Deployment)
+│   ├── ports.py                      # Définition des protocoles abstraits (GitLabPort, OrchestratorPort)
+│   └── schemas.py                    # Schémas de validation et sérialisation Pydantic v2
+├── alembic/                          # Scripts de migration de base de données
 ├── tests/
-│   ├── conftest.py                 # SQLite in-memory test database & client fixtures
-│   └── test_paas.py                # Comprehensive test suite covering all 7+ checkpoints
+│   ├── conftest.py                   # Fixtures de test & base SQLite mémoire
+│   └── test_paas.py                  # Suite de tests d'intégration complète
 ├── scripts/
-│   ├── simulate_webhook.sh         # Bash webhook simulator
-│   ├── simulate_webhook.py         # Cross-platform Python webhook simulator
-│   └── demo.py                     # Automated end-to-end lifecycle demo
-├── Dockerfile                      # Production container image
-├── docker-compose.yml              # PostgreSQL + API container composition
-├── openapi.json                    # Exported OpenAPI 3.1 specification
-├── requirements.txt                # Python dependencies
-├── .env.example                    # Template environment variables
-└── .env                            # Active environment configuration
+│   ├── demo.py                       # Démonstration automatisée du cycle de vie complet
+│   ├── simulate_webhook.py           # Simulateur de webhooks multi-plateforme (Python)
+│   └── simulate_webhook.sh           # Simulateur de webhooks pour terminaux Bash
+├── Dockerfile                        # Image Docker de production optimisée
+├── docker-compose.yml                # Composition conteneurisée (PostgreSQL 16 + API FastAPI)
+├── .dockerignore                     # Exclusions pour la compilation d'image Docker
+├── .gitignore                        # Fichiers ignorés par Git
+├── requirements.txt                  # Dépendances Python
+├── .env.example                      # Modèle de variables d'environnement
+└── README.md                         # Documentation du projet
 ```
 
 ---
 
-## 4. Quickstart: Running Locally
+## 4. Machine à États du Projet
 
-### Prerequisites
-- Python 3.12+ (Python 3.14 compatible)
-- (Optional) Docker & Docker Compose for PostgreSQL container
-
-### Option A: Local Dev Server
-```powershell
-# 1. Activate virtual environment
-.venv\Scripts\activate   # On Linux/macOS: source .venv/bin/activate
-
-# 2. Run migrations
-alembic upgrade head
-
-# 3. Start the API
-uvicorn app.main:app --reload --port 8000
-```
-
-### Option B: Run via Docker Compose
-```bash
-docker compose up -d
-```
-
-### Option C: Run the Full End-to-End Demo
-With the server running on `http://localhost:8000`:
-```powershell
-python scripts/demo.py
-```
-
-### Option D: Run Test Suite
-```powershell
-pytest -q
-```
-*Result: 11 passed in ~2 seconds.*
-
----
-
-## 5. API Endpoints Overview
-
-| Method | Path | Auth Header | Description |
-|---|---|---|---|
-| `GET` | `/health` | *None* | Health check (`{"status": "ok"}`) |
-| `POST` | `/projects` | `X-Dev-User: <username>` | Create new project (returns `awaiting_push` & `repo_url`) |
-| `GET` | `/projects` | `X-Dev-User: <username>` | List only caller's projects |
-| `GET` | `/projects/{id}` | `X-Dev-User: <username>` | Get project details (404 if not owner) |
-| `GET` | `/projects/{id}/builds` | `X-Dev-User: <username>` | List pipeline events for project |
-| `GET` | `/projects/{id}/images` | `X-Dev-User: <username>` | List built container images & tags |
-| `POST` | `/projects/{id}/deploy` | `X-Dev-User: <username>` | Manual redeploy or rollback to specific image |
-| `POST` | `/webhooks/gitlab` | `X-Gitlab-Token: <secret>` | Receives pipeline events, triggers build handler |
-| `POST` | `/internal/deployments/{id}/status` | `X-Internal-Token: <token>` | Orchestrator deployment completion callback |
-
-Swagger interactive documentation is available at `http://localhost:8000/docs`.
-
----
-
-## 6. Project Status Lifecycle
+Chaque projet suit une machine à états stricte pour refléter son statut en temps réel :
 
 ```
 [creating] ──> [awaiting_push] ──> [building] ──> [built] ──> [deploying] ──> [deployed]
-      │                               │                              │
-      └──> [failed]                   └──> [build_failed]            └──> [failed]
+     │                                │                             │
+     └──> [failed]                    └──> [build_failed]           └──> [failed]
 ```
-- **`creating`**: Initial row saved in DB; backend is currently creating the GitLab repo and webhook.
-- **`awaiting_push`**: Repository created, empty, with `ci_config_path` pointing to shared template. Waiting for student's first push.
-- **`building`**: GitLab CI pipeline received `pending` or `running` webhook.
-- **`built`**: GitLab CI pipeline succeeded. Image is published in container registry.
-- **`deploying`**: Backend matched commit SHA to registry image digest and requested Orchestrator to deploy.
-- **`deployed`**: Orchestrator successfully deployed pods and ingress on Kubernetes and called status callback.
-- **Failure states**:
-  - `build_failed`: Pipeline failed in GitLab CI (e.g. Dockerfile build error or student tests failed). A new `git push` automatically restarts the cycle at `building`.
-  - `failed`: GitLab repo creation error, missing image in registry, or Orchestrator deployment error. Details stored in `project.error`.
+
+- **`creating`** : Enregistrement initial en base ; création du dépôt GitLab et configuration du webhook en cours.
+- **`awaiting_push`** : Dépôt GitLab créé et vierge. En attente du premier commit/push de l'étudiant.
+- **`building`** : Réception d'un webhook GitLab (`pending` ou `running`). La compilation de l'image est en cours.
+- **`built`** : Le pipeline GitLab s'est terminé avec succès. L'image conteneur est publiée sur le Container Registry.
+- **`deploying`** : Le backend a associé le SHA du commit au digest de l'image et a commandé le déploiement à l'Orchestrateur.
+- **`deployed`** : L'Orchestrateur a instancié les pods Kubernetes et configuré l'Ingress. L'application est accessible en ligne.
+- **États d'erreur** :
+  - `build_failed` : Échec de la compilation dans GitLab CI (ex: erreur de Dockerfile ou tests unitaires échoués). Un nouveau `git push` relancera automatiquement le cycle.
+  - `failed` : Erreur de communication infrastructure, image introuvable ou échec de déploiement Kubernetes. Le détail de l'erreur est consigné dans `project.error`.
 
 ---
 
-## 7. Team-by-Team Integration Runbook (Step 13)
+## 5. Démarrage Rapide
 
-Switch one dependency at a time and re-run `python scripts/demo.py`:
+### Option 1 : Avec Docker Compose (Recommandé)
 
-### A. Switching GitLab to Real
-1. Update `.env`:
-   ```ini
-   GITLAB_MODE=real
-   GITLAB_URL=https://gitlab.gandal.local
-   GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
-   GITLAB_GROUP_ID=42
-   GITLAB_CA_BUNDLE=/etc/ssl/certs/gandal-ca.pem
-   ```
-2. Verify token access:
-   ```bash
-   curl -k -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/user"
-   ```
-3. Create a test project via `POST /projects` and verify the repository appears in the group without README, has the webhook pointing to `$WEBHOOK_PUBLIC_URL/webhooks/gitlab`, and has `ci_config_path` set.
-4. Push a sample app with a `Dockerfile`. Confirm webhook arrives and updates project to `building` then `built`.
+Cette méthode lance l'environnement complet avec base de données **PostgreSQL 16** et l'API conteneurisée :
 
-### B. Runner & CI Template
-- Ensure template project exists at `$CI_TEMPLATE` (e.g. `templates/build.yml@paas/ci-templates`).
-- Template must build using Kaniko:
-  ```yaml
-  /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-  ```
-- Images are tagged with `$CI_COMMIT_SHORT_SHA` (matching the `sha[:8]` lookup in `build_service.py`).
+```bash
+# 1. Démarrer les services en arrière-plan
+docker compose up -d --build
 
-### C. Switching Orchestrator to Real
-1. Update `.env`:
-   ```ini
-   ORCHESTRATOR_MODE=real
-   ORCHESTRATOR_URL=http://orchestrator.gandal.local:8080
-   ```
-2. Confirm the Orchestrator accepts `POST /deployments` and responds with `202 Accepted` + `{"deployment_ref": "..."}`.
-3. Confirm the Orchestrator can reach our `$WEBHOOK_PUBLIC_URL/internal/deployments/{id}/status` with `X-Internal-Token`.
+# 2. Vérifier l'état des conteneurs
+docker compose ps
 
-### D. Switching Auth to OAuth
-1. Update `.env`:
-   ```ini
-   AUTH_MODE=oauth
-   ```
-2. Register OAuth application in GitLab. The Developer Portal passes `Authorization: Bearer <gitlab_access_token>`.
+# 3. Consulter les logs de l'API
+docker compose logs -f api
+```
+
+L'API devient accessible sur :
+- **Swagger UI** : [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc** : [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **Vérification de santé** : [http://localhost:8000/health](http://localhost:8000/health)
+
+Pour arrêter les conteneurs :
+```bash
+docker compose down
+```
 
 ---
 
-## 8. Runbook & Troubleshooting
+### Option 2 : Exécution Locale (Sans Docker)
 
-- **Webhook not arriving**:
-  - Check firewall between GitLab server and Backend (`$WEBHOOK_PUBLIC_URL`).
-  - In GitLab UI: Navigate to Project > Settings > Webhooks > **Recent Deliveries** to inspect response codes and network errors.
-  - Verify `WEBHOOK_SECRET` matches in GitLab webhook config and Backend `.env`.
-- **Runner offline**:
-  - Student pushes code but status remains `awaiting_push` or pipeline stays `pending` indefinitely.
-  - Check runner VM: `gitlab-runner status`.
-- **Image tag missing (`image tag ... not found in registry`)**:
-  - Ensure the CI template tags the image with `$CI_COMMIT_SHORT_SHA` (8 characters).
-  - Verify GitLab Container Registry is enabled for the project group and permissions allow reading tags.
-- **Orchestrator unreachable**:
-  - Check `ORCHESTRATOR_URL` connectivity and DNS resolution.
-  - Verify network policies permit egress from Backend to Orchestrator and ingress back to `/internal/*`.
+```bash
+# 1. Créer et activer l'environnement virtuel Python
+python -m venv .venv
+# Sur Windows :
+.venv\Scripts\activate
+# Sur Linux / macOS :
+source .venv/bin/activate
+
+# 2. Installer les dépendances
+pip install -r requirements.txt
+
+# 3. Créer le fichier .env à partir de l'exemple
+cp .env.example .env
+
+# 4. Appliquer les migrations de base de données
+alembic upgrade head
+
+# 5. Démarrer le serveur ASGI
+uvicorn app.main:app --reload --port 8000
+```
+
+---
+
+## 6. Guide de Test et de Validation
+
+### Exécuter la Suite de Tests Automatisée
+La suite de tests vérifie l'ensemble des règles métier, la sécurité d'accès multi-tenant, la déduplication des webhooks et les flux de déploiement :
+```bash
+pytest -v
+```
+*Résultat attendu : 11 tests passés avec succès.*
+
+### Exécuter la Démo Complète de Bout en Bout
+Avec l'API démarrée sur `http://localhost:8000` :
+```bash
+python scripts/demo.py
+```
+Ce script simule de manière autonome :
+1. La création d'un projet par l'étudiante `alice` (`POST /projects`).
+2. La détection du statut `awaiting_push`.
+3. Le déclenchement du webhook GitLab CI de build (`building`).
+4. La réussite du build et l'enregistrement de l'image (`built`).
+5. La demande de déploiement auprès de l'Orchestrateur (`deploying`).
+6. Le callback de confirmation Kubernetes avec génération de l'URL publique (`deployed`).
+7. La consultation du statut final et des détails du projet.
+
+### Simuler un Webhook Manuellement
+Vous pouvez envoyer des événements de pipeline GitLab arbitraires pour tester la robustesse :
+```bash
+# Simuler un build en cours pour le projet 1
+python scripts/simulate_webhook.py running 1
+
+# Simuler un succès de build
+python scripts/simulate_webhook.py success 1
+
+# Simuler un échec de build
+python scripts/simulate_webhook.py failed 1
+```
+
+---
+
+## 7. Référentiel des Endpoints API
+
+| Méthode | Route | En-tête d'Authentification | Description |
+|---|---|---|---|
+| `GET` | `/health` | *Aucun* | Vérification de santé du service et de la base de données |
+| `POST` | `/projects` | `X-Dev-User: <username>` | Création d'un nouveau projet (statut initial `awaiting_push`) |
+| `GET` | `/projects` | `X-Dev-User: <username>` | Liste des projets appartenant à l'utilisateur connecté |
+| `GET` | `/projects/{id}` | `X-Dev-User: <username>` | Détail d'un projet (renvoie 404 si l'utilisateur n'en est pas propriétaire) |
+| `GET` | `/projects/{id}/builds` | `X-Dev-User: <username>` | Liste des événements de pipeline du projet |
+| `GET` | `/projects/{id}/images` | `X-Dev-User: <username>` | Liste des images conteneurs construites pour ce projet |
+| `POST` | `/projects/{id}/deploy` | `X-Dev-User: <username>` | Déclenchement manuel d'un redéploiement ou rollback |
+| `POST` | `/webhooks/gitlab` | `X-Gitlab-Token: <secret>` | Réception des notifications de pipeline GitLab CI (idempotent) |
+| `POST` | `/internal/deployments/{id}/status` | `X-Internal-Token: <token>` | Callback sécurisé utilisé par l'Orchestrateur Kubernetes |
+
+---
+
+## 8. Guide pour Uploader le Projet sur GitHub
+
+Pour publier ce projet sur votre propre compte GitHub :
+
+1. **Créer un nouveau dépôt vierge sur GitHub** (par exemple nommé `paas-backend`) sans cocher l'initialisation de README ni de .gitignore.
+2. **Ouvrir un terminal dans le dossier du projet** et exécuter les commandes suivantes :
+
+```bash
+# 1. Vérifier le statut des fichiers
+git status
+
+# 2. Ajouter tous les fichiers modifiés et nouvellement créés (.dockerignore, Dockerfile, etc.)
+git add .
+
+# 3. Enregistrer le commit
+git commit -m "feat: complete dockerization and documentation for GANDAL PaaS backend"
+
+# 4. Définir la branche principale sur main
+git branch -M main
+
+# 5. Relier à votre dépôt GitHub distant (remplacez VOTRE_UTILISATEUR par votre pseudo GitHub)
+git remote add origin https://github.com/VOTRE_UTILISATEUR/paas-backend.git
+
+# Si un remote origin existait déjà, mettez-le à jour :
+# git remote set-url origin https://github.com/VOTRE_UTILISATEUR/paas-backend.git
+
+# 6. Pousser le code vers GitHub
+git push -u origin main
+```
+
+---
+
+## 9. Passage en Production (Checklist Équipe)
+
+Pour interconnecter le backend avec les vrais services de l'école :
+
+1. **GitLab Réel** :
+   - Définir `GITLAB_MODE=real` dans `.env`.
+   - Renseigner `GITLAB_URL`, `GITLAB_TOKEN` (avec droits de création de projets et de webhooks dans le groupe), et `GITLAB_GROUP_ID`.
+2. **Orchestrateur Kubernetes Réel** :
+   - Définir `ORCHESTRATOR_MODE=real` dans `.env`.
+   - Renseigner `ORCHESTRATOR_URL`.
+   - Vérifier que l'Orchestrateur a accès au point d'entrée `/internal/deployments/{id}/status` avec la valeur configurée dans `INTERNAL_TOKEN`.
+3. **Authentification OAuth** :
+   - Définir `AUTH_MODE=oauth`.
+   - Configurer l'application OAuth GitLab pour que le Portail Développeur transmette le jeton d'accès dans l'en-tête `Authorization: Bearer <token>`.
