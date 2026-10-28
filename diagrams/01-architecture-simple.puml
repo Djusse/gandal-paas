@@ -1,0 +1,46 @@
+@startuml
+title Architecture GANDAL PaaS - Vue d ensemble
+
+skinparam linetype ortho
+
+cloud "Internet" {
+    actor Utilisateur
+}
+
+cloud "AWS eu-north-1" {
+    rectangle "VPC 10.0.0.0/16" {
+        rectangle "Security Group\nPorts: 22, 80, 443, 6443" as sg
+        
+        rectangle "Instance EC2\nm7i-flex.large\n2 vCPU / 8 Go RAM" as ec2 {
+            rectangle "K3s Cluster" as k3s {
+                rectangle "Traefik\nIngress" as traefik
+                rectangle "CoreDNS" as dns
+                rectangle "metrics-server" as metrics
+                
+                package "gandal-system" {
+                    rectangle "Registry\nlocalhost:5000" as registry
+                }
+                
+                package "project-alice-memoire" {
+                    rectangle "nginx pods\nx2" as pods
+                    rectangle "Service" as svc
+                    rectangle "Ingress" as ing
+                }
+            }
+        }
+        
+        rectangle "Elastic IP\n16.170.20.250" as eip
+    }
+}
+
+cloud "DNS sslip.io" as sslip
+
+Utilisateur --> sslip : 1. DNS Query
+sslip --> eip : 2. Resolves to IP
+eip --> sg : 3. HTTP Request
+sg --> traefik : 4. Port 80
+traefik --> ing : 5. Route by Host
+ing --> svc : 6. Backend
+svc --> pods : 7. Load balance
+
+@enduml

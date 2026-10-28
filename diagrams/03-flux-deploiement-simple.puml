@@ -1,0 +1,41 @@
+@startuml
+title Flux de deploiement d une application
+
+actor Admin
+participant "gandal_deploy.py" as script
+participant "API Kubernetes" as api
+database etcd
+participant Scheduler
+participant Kubelet
+participant Registry
+
+Admin -> script : deploy alice memoire my-api
+
+== Phase 1-4: Gouvernance ==
+script -> api : Create Namespace
+api -> etcd : Store
+script -> api : Create ResourceQuota
+script -> api : Create LimitRange
+script -> api : Create NetworkPolicy
+
+== Phase 5-7: Application ==
+script -> api : Create Deployment (2 replicas)
+api -> Scheduler : Schedule pods
+Scheduler -> Kubelet : Start pod1
+Scheduler -> Kubelet : Start pod2
+
+Kubelet -> Registry : Pull image
+Registry --> Kubelet : localhost:5000/my-api:v1
+
+Kubelet -> Kubelet : Start containers
+
+script -> api : Create Service (ClusterIP)
+script -> api : Create Ingress (HTTP)
+
+== Phase 8: Verification ==
+script -> api : Wait for Ready
+api --> script : 2/2 pods Ready
+
+script --> Admin : URL: http://my-api-memoire-alice.16.170.20.250.sslip.io
+
+@enduml

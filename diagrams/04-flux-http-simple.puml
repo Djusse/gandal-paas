@@ -1,0 +1,43 @@
+@startuml
+title Requete HTTP de bout en bout
+
+actor Client
+participant "sslip.io" as dns
+participant "Elastic IP" as eip
+participant "Traefik" as traefik
+participant "Service" as svc
+participant "Pod nginx" as pod
+
+Client -> dns : DNS Query\nmy-api-memoire-alice.16.170.20.250.sslip.io
+dns --> Client : A record: 16.170.20.250
+
+Client -> eip : HTTP GET /\nHost: my-api-memoire-alice...
+eip -> traefik : Forward to port 80
+
+traefik -> traefik : Lookup route by Host header
+note right
+  Route table:
+  Host: my-api-memoire-alice...
+  Backend: Service my-api
+end note
+
+traefik -> svc : Forward to\nmy-api.project-alice-memoire.svc:80
+
+svc -> svc : Load balance (round-robin)
+note right
+  Endpoints:
+  - 10.42.0.11:80 (pod1)
+  - 10.42.0.12:80 (pod2)
+end note
+
+svc -> pod : Forward to 10.42.0.11:80
+
+pod -> pod : nginx process request
+pod --> svc : HTTP 200 + HTML
+svc --> traefik : HTTP 200
+traefik --> eip : HTTP 200
+eip --> Client : HTTP 200 + HTML
+
+Client -> Client : Render page
+
+@enduml

@@ -1,0 +1,57 @@
+@startuml
+title K3s - Organisation des namespaces
+
+package "K3s Cluster" {
+    
+    package "kube-system" #LightBlue {
+        [Traefik\nIngress Controller]
+        [CoreDNS]
+        [metrics-server]
+        [local-path\nprovisioner]
+    }
+    
+    package "gandal-system" #LightYellow {
+        [Registry\nlocalhost:5000] as registry
+        database "PVC 10Gi" as pvc
+        registry --> pvc
+    }
+    
+    package "project-alice-memoire" #LightGreen {
+        rectangle "ResourceQuota\n4 pods max\n2 CPU / 2Gi RAM" as quota_alice
+        rectangle "NetworkPolicy\nIsolation" as netpol_alice
+        [Pod my-api-1] as pod_a1
+        [Pod my-api-2] as pod_a2
+        [Service my-api] as svc_a
+        [Ingress my-api] as ing_a
+        
+        svc_a --> pod_a1
+        svc_a --> pod_a2
+        ing_a --> svc_a
+    }
+    
+    package "project-bob-test" #LightCyan {
+        rectangle "ResourceQuota" as quota_bob
+        rectangle "NetworkPolicy" as netpol_bob
+        [Pod web-1] as pod_b1
+        [Pod web-2] as pod_b2
+        [Service web] as svc_b
+        [Ingress web] as ing_b
+        
+        svc_b --> pod_b1
+        svc_b --> pod_b2
+        ing_b --> svc_b
+    }
+}
+
+note right of netpol_alice
+  Autorise:
+  - Meme namespace
+  - kube-system
+  Bloque:
+  - Autres namespaces
+end note
+
+[Traefik\nIngress Controller] ..> ing_a : Route HTTP
+[Traefik\nIngress Controller] ..> ing_b : Route HTTP
+
+@enduml

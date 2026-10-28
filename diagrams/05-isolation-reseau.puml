@@ -1,0 +1,45 @@
+@startuml
+title Isolation reseau avec NetworkPolicy
+
+package "K3s Cluster" {
+    
+    package "kube-system" {
+        component "Traefik\n10.42.0.5" as traefik
+    }
+    
+    package "project-alice-memoire" {
+        rectangle "NetworkPolicy\nisolate-ingress" as netpol_a
+        component "Pod my-api-1\n10.42.0.11" as alice_pod1
+        component "Pod my-api-2\n10.42.0.12" as alice_pod2
+        component "Service my-api" as alice_svc
+        
+        alice_svc --> alice_pod1
+        alice_svc --> alice_pod2
+    }
+    
+    package "project-bob-test" {
+        rectangle "NetworkPolicy" as netpol_b
+        component "Pod web-1\n10.42.0.21" as bob_pod1
+        component "Pod web-2\n10.42.0.22" as bob_pod2
+    }
+}
+
+' Flux autorises (vert)
+traefik -[#green,bold]-> alice_pod1 : AUTORISE\n(kube-system)
+alice_pod1 -[#green,bold]-> alice_pod2 : AUTORISE\n(meme namespace)
+
+' Flux bloques (rouge)
+bob_pod1 -[#red,bold]-> alice_pod1 : BLOQUE\n(autre namespace)
+bob_pod2 -[#red,bold]-> alice_pod2 : BLOQUE
+
+legend right
+  |<#green> Autorise | NetworkPolicy permet |
+  |<#red> Bloque | NetworkPolicy refuse |
+  
+  Regles:
+  - Meme namespace: OK
+  - kube-system: OK (Traefik)
+  - Autres: BLOQUE
+endlegend
+
+@enduml

@@ -1,0 +1,54 @@
+@startuml
+title Gestion des quotas - Scenario de scale
+
+participant Admin
+participant Deployment
+participant "Admission\nController" as admission
+database "ResourceQuota\n4 pods max" as quota
+
+== Etat initial: 2 replicas ==
+Admin -> Deployment : 2 replicas demandes
+Deployment -> admission : Create pod1
+admission -> quota : Check quota
+quota --> admission : 1/4 pods OK
+admission --> Deployment : pod1 APPROVED
+
+Deployment -> admission : Create pod2
+admission -> quota : Check quota
+quota --> admission : 2/4 pods OK
+admission --> Deployment : pod2 APPROVED
+
+note right
+  Etat: 2 pods Running
+end note
+
+== Tentative de scale a 10 replicas ==
+Admin -> Deployment : kubectl scale --replicas=10
+note right: Demande 8 pods supplementaires
+
+Deployment -> admission : Create pod3
+admission -> quota : Check quota (3/4)
+admission --> Deployment : pod3 APPROVED
+
+Deployment -> admission : Create pod4
+admission -> quota : Check quota (4/4)
+admission --> Deployment : pod4 APPROVED
+
+Deployment -> admission : Create pod5
+admission -> quota : Check quota (5/4)
+quota --> admission : QUOTA EXCEEDED
+admission -[#red]-> Deployment : pod5 REJECTED
+
+Deployment -> admission : Create pod6
+admission -> quota : Check quota (still 5/4)
+admission -[#red]-> Deployment : pod6-10 REJECTED
+
+note right
+  Etat final: 4 pods Running
+  Events: "exceeded quota"
+end note
+
+Admin -> Deployment : Get status
+Deployment --> Admin : spec.replicas=10\nstatus.replicas=4
+
+@enduml

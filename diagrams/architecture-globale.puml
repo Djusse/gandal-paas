@@ -1,12 +1,5 @@
 @startuml architecture-globale
-!define AWSPUML https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/v18.0/dist
-!include AWSPUML/AWSCommon.puml
-!include AWSPUML/NetworkingContentDelivery/VPC.puml
-!include AWSPUML/Compute/EC2.puml
-!include AWSPUML/NetworkingContentDelivery/ElasticIPAddress.puml
-!include AWSPUML/SecurityIdentityCompliance/SecurityGroup.puml
-!include AWSPUML/NetworkingContentDelivery/InternetGateway.puml
-
+!theme plain
 title Architecture Globale GANDAL PaaS sur AWS
 
 skinparam linetype ortho
@@ -22,11 +15,11 @@ package "Internet" {
 }
 
 package "AWS eu-north-1" {
-    VPC(vpc, "VPC GANDAL", "10.0.0.0/16") {
-        InternetGateway(igw, "Internet Gateway", "")
+    rectangle "VPC GANDAL\n10.0.0.0/16" as vpc {
+        rectangle "Internet Gateway" as igw
         
         package "Sous-réseau public\n10.0.0.0/24" {
-            SecurityGroup(sg, "Security Group", "gandal-paas-sg") {
+            rectangle "Security Group\ngandal-paas-sg" as sg {
                 note right
                     Port 22: SSH (IP restreinte)
                     Port 80: HTTP (public)
@@ -35,9 +28,9 @@ package "AWS eu-north-1" {
                 end note
             }
             
-            ElasticIPAddress(eip, "Elastic IP", "16.170.20.250")
+            rectangle "Elastic IP\n16.170.20.250" as eip #lightblue
             
-            EC2(ec2, "Instance EC2", "m7i-flex.large\n2 vCPU / 8 Go RAM\n30 Go gp3") {
+            rectangle "Instance EC2\nm7i-flex.large\n2 vCPU / 8 Go RAM\n30 Go gp3" as ec2 #orange {
                 rectangle "Ubuntu 24.04 LTS" as os {
                     rectangle "Docker" as docker
                     
