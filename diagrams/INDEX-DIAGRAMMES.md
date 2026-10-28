@@ -1,6 +1,6 @@
 # Index des diagrammes GANDAL PaaS
 
-## ✅ 18 diagrammes PNG générés avec succès !
+## ✅ 12 diagrammes PNG générés avec succès !
 
 ### 🎨 Diagrammes simplifiés (pour présentation - RECOMMANDÉS)
 
@@ -24,16 +24,7 @@
 | 11 | `11-isolation-v2.png` | NetworkPolicy détaillée | 113 KB | Sécurité détaillée |
 | 12 | `12-quotas-v2.png` | Quotas avec séquence | 133 KB | Gestion ressources |
 
-### 📊 Diagrammes originaux (petite taille - backup)
 
-| # | Fichier | Taille |
-|---|---|---|
-| 13 | `architecture-globale.png` | 5.5 KB |
-| 14 | `architecture-k3s.png` | 5.3 KB |
-| 15 | `flux-deploiement.png` | 5.2 KB |
-| 16 | `flux-http.png` | 4.6 KB |
-| 17 | `isolation-reseau.png` | 4.9 KB |
-| 18 | `quotas-limites.png` | 5.0 KB |
 
 ## 🎯 Recommandations d'usage
 
@@ -102,11 +93,10 @@ plantuml *.puml
 
 ## 📊 Statistiques
 
-- **Total diagrammes** : 18 PNG
-- **Taille totale** : ~1.2 MB
+- **Total diagrammes** : 12 PNG
+- **Taille totale** : ~1.14 MB
 - **Simplifiés (présentation)** : 6 (~455 KB)
 - **Détaillés v2 (documentation)** : 6 (~683 KB)
-- **Originaux (backup)** : 6 (~31 KB)
 
 ## 📝 Correspondance fichiers
 
