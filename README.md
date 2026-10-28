@@ -30,6 +30,43 @@ Deux passes sont nécessaires pour la table des matières.
 
 ## Phase 1 — Provisionner l'instance AWS
 
+### Option A : script automatique (CloudShell)
+
+Sur votre PC, créer une paire de clés :
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/gandal -C gandal-paas
+```
+
+Puis dans AWS CloudShell, coller le contenu de `scripts/provision-aws.sh`
+(dans l'éditeur CloudShell, ou par copier-coller si le dépôt n'est pas
+accessible) et :
+
+```bash
+chmod +x provision-aws.sh
+./provision-aws.sh up ~/.ssh/gandal.pub
+```
+
+Le script crée le VPC, le sous-réseau public, la passerelle Internet, la table
+de routage, le Security Group, la paire de clés, l'instance `t3.large` avec
+60 Go gp3 et l'Elastic IP, puis affiche l'IP publique. La clé publique doit être
+envoyée dans CloudShell (CloudShell n'a pas accès à votre `~/.ssh` local) :
+
+```bash
+# Dans CloudShell, creer la cle directement la-bas puis la rapatrier
+ssh-keygen -t ed25519 -f ~/gandal -N "" -C gandal-paas
+cat ~/gandal          # copier la cle PRIVEE dans ~/.ssh/gandal sur votre PC
+./provision-aws.sh up ~/gandal.pub
+```
+
+Suppression complète :
+
+```bash
+./provision-aws.sh down
+```
+
+### Option B : console AWS à la main
+
 | Élément | Valeur |
 |---|---|
 | AMI | Ubuntu 24.04 LTS |
