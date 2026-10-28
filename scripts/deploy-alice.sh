@@ -7,9 +7,9 @@ KEY_PATH="${KEY_PATH:-$HOME/gandal}"
 
 echo "==> Phase 4-6 : Déploiement de l'application Alice"
 
-ssh -i "$KEY_PATH" ubuntu@"$ELASTIC_IP" bash << 'ENDSSH'
+ssh -i "$KEY_PATH" ubuntu@"$ELASTIC_IP" bash <<ENDSSH
 set -e
-export KUBECONFIG=$HOME/.kube/config
+export KUBECONFIG=\$HOME/.kube/config
 export GANDAL_BASE_DOMAIN="${ELASTIC_IP}.sslip.io"
 
 source ~/gandal-venv/bin/activate
