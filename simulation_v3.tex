@@ -1,0 +1,750 @@
+\documentclass[12pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\geometry{top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{tcolorbox}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdftitle={Plan de Simulation GANDAL PaaS sur AWS - v3},
+}
+
+% --- Affichage du code ---
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+% Le langage YAML n'est pas fourni par listings : definition necessaire
+\lstdefinelanguage{yaml}{
+  keywords={true,false,null,y,n},
+  sensitive=false,
+  comment=[l]{\#},
+  morestring=[b]',
+  morestring=[b]"
+}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+\lstset{style=mystyle}
+% Accents francais dans les listings (compatible pdflatex)
+\lstset{literate=
+  {é}{{\'e}}1 {è}{{\`e}}1 {ê}{{\^e}}1 {ë}{{\"e}}1
+  {à}{{\`a}}1 {â}{{\^a}}1 {î}{{\^i}}1 {ï}{{\"i}}1
+  {ô}{{\^o}}1 {ù}{{\`u}}1 {û}{{\^u}}1 {ç}{{\c c}}1
+  {É}{{\'E}}1 {È}{{\`E}}1 {À}{{\`A}}1 {œ}{{\oe}}1
+}
+
+% --- Titres ---
+\titleformat{\section}{\Large\bfseries\color{blue!80!black}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{blue!60!black}}{\thesubsection}{1em}{}
+
+% --- Page de garde ---
+\title{
+    \vspace{2cm}
+    \textbf{\Huge Projet GANDAL} \\
+    \vspace{0.5cm}
+    \Large{Procédure d'implémentation de la simulation PaaS} \\
+    \vspace{1cm}
+    \large{Approche « outils standards » pour une portabilité maximale vers XCP-ng} \\
+    \vspace{0.5cm}
+    \normalsize{Version 3}
+}
+\author{\textbf{Cellule PaaS}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+% ==========================================
+\section{Introduction et philosophie de la simulation}
+
+\subsection{Objectif}
+Ce document décrit la procédure pour déployer sur une VM AWS un mini-datacenter fonctionnel : une grosse VM, un cluster Kubernetes mono-nœud, et un script PaaS qui crée à la demande les conteneurs, les pods, le rattachement à un utilisateur et un nom DNS d'accès. L'objectif est de valider la mécanique Kubernetes (Namespaces, Deployments, Services, Ingress, Quotas, NetworkPolicies) sans dépendre de l'infrastructure physique finale.
+
+\subsection{Règle d'or : zéro service managé}
+AWS est utilisé uniquement comme fournisseur de machines virtuelles. Aucun service managé n'est employé (ni EKS, ni ECR, ni Route 53). Les équivalents open source sont installés à la main :
+\begin{itemize}
+    \item \textbf{Kubernetes} : K3s sur une instance EC2 ;
+    \item \textbf{Registry} : \nolinkurl{registry:2} déployé dans le cluster ;
+    \item \textbf{DNS} : enregistrement wildcard vers l'IP de la VM (voir Phase~6).
+\end{itemize}
+
+\subsection{Docker et Kubernetes : qui fait quoi}
+Docker sert à \textbf{construire et publier} les images. Kubernetes (via le runtime \textit{containerd} intégré à K3s) \textbf{exécute} les conteneurs. Les images construites avec Docker sont exécutées par K3s sans modification.
+
+\subsection{Fichiers livrés}
+La procédure repose sur trois fichiers, à conserver dans un dépôt Git plutôt que dans ce document :
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Fichier} & \textbf{Rôle} \\
+\midrule
+\texttt{install.sh} & Installe Docker, K3s et le registry (autonome, rejouable) \\
+\texttt{registry.yaml} & Manifeste du registry (déjà inclus dans \texttt{install.sh}) \\
+\texttt{gandal\_deploy.py} & Script PaaS : \texttt{deploy}, \texttt{list}, \texttt{status}, \texttt{delete} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Principes pour réduire l'effort de migration vers GANDAL}
+\begin{itemize}
+    \item \textbf{Le script est la source de vérité} : tout ce qui est créé pour un utilisateur (namespace, quota, NetworkPolicy, déploiement, service, ingress) l'est par \texttt{gandal\_deploy.py}, pas par des YAML appliqués à la main.
+    \item \textbf{Aucune valeur dépendante de l'environnement dans le code} : domaine, classe d'Ingress et quotas sont lus dans des variables d'environnement.
+    \item \textbf{Installation rejouable} : \texttt{install.sh} installe tout le socle en une commande.
+\end{itemize}
+
+\begin{tcolorbox}[colback=green!5!white,colframe=green!75!black,title=Portabilité]
+La logique Kubernetes et le script Python sont réutilisables tels quels sur XCP-ng. Ce qui change est listé explicitement à la Phase~9 (adresse IP, domaine, TLS, accès Internet, éventuellement le CNI).
+\end{tcolorbox}
+
+% ==========================================
+\section{Phase 1 : VM sur AWS (le « faux » XCP-ng)}
+
+\subsection{But}
+Créer la machine virtuelle brute qui jouera le rôle de la VM fournie plus tard par l'équipe Système.
+
+\subsection{Mise en place}
+\begin{enumerate}
+    \item \textbf{VPC} : créer un VPC (par exemple \nolinkurl{10.0.0.0/16}) avec un sous-réseau public.
+    \item \textbf{Security Group} : autoriser le port 22 (SSH, limité à votre IP), les ports 80 et 443 (HTTP/HTTPS, ouverts à tous) et le port 6443 (API Kubernetes, limité à votre IP, seulement si vous pilotez le cluster depuis votre PC).
+    \item \textbf{Port 5000 volontairement fermé} : le registry n'est pas exposé à Internet. Les images sont donc construites, étiquetées et poussées \textbf{depuis la VM}, ou copiées sur la VM (par exemple avec \texttt{docker save} puis \texttt{scp}).
+    \item \textbf{Instance EC2} :
+    \begin{itemize}
+        \item AMI : Ubuntu 24.04 LTS ;
+        \item type : \texttt{t3.large} (2 vCPU, 8 Go de RAM). Les instances t3 sont « burstables » : lors de tests de charge, les crédits CPU peuvent limiter les performances ;
+        \item stockage : volume racine de 60 Go (gp3) ;
+        \item IP : associer une \textbf{Elastic IP} (adresse fixe indispensable pour le DNS).
+    \end{itemize}
+\end{enumerate}
+
+\begin{tcolorbox}[colback=yellow!10!white,colframe=orange!75!black,title=Coût]
+L'Elastic IP et le volume gp3 sont facturés même instance arrêtée. Pensez à tout supprimer après la démonstration.
+\end{tcolorbox}
+
+% ==========================================
+\section{Phase 2 : Installation de Docker, K3s et du registry}
+
+\subsection{But}
+Installer Docker (pour construire les images), un cluster Kubernetes léger identique dans son fonctionnement à celui du futur datacenter, et le registry privé, le tout en une seule commande.
+
+\subsection{Utilisation}
+Copier \texttt{install.sh} sur la VM, puis :
+\begin{lstlisting}[language=bash]
+chmod +x install.sh
+./install.sh <ELASTIC_IP>
+\end{lstlisting}
+
+\textbf{Docker sans sudo.} Le script ajoute l'utilisateur au groupe \texttt{docker}, mais ce groupe ne s'applique qu'après reconnexion. Dans la session courante, utiliser \texttt{sudo docker} ou ouvrir un nouveau shell avec \texttt{newgrp docker}. Sans cela, les commandes \texttt{docker push} de la Phase~3 échouent.
+
+\subsection{Contenu de \texttt{install.sh}}
+\begin{lstlisting}[language=bash]
+#!/usr/bin/env bash
+# install.sh <IP_PUBLIQUE>
+# Installation rejouable de la base GANDAL PaaS : Docker, K3s, registry prive.
+# Teste pour Ubuntu 24.04. Autonome : ne depend d'aucun autre fichier.
+set -euo pipefail
+
+PUBLIC_IP="${1:?usage: ./install.sh <IP_PUBLIQUE>}"
+
+echo "==> Paquets de base"
+sudo apt-get update
+sudo apt-get install -y curl git docker.io python3-venv
+sudo systemctl enable --now docker
+# Le groupe docker ne s'applique qu'apres reconnexion : utiliser 'sudo docker'
+# ou 'newgrp docker' dans la session courante.
+sudo usermod -aG docker "$USER"
+
+echo "==> Configuration du registry pour K3s (HTTP sur localhost:5000)"
+sudo mkdir -p /etc/rancher/k3s
+sudo tee /etc/rancher/k3s/registries.yaml >/dev/null <<'EOF'
+mirrors:
+  "localhost:5000":
+    endpoint:
+      - "http://localhost:5000"
+EOF
+
+echo "==> Installation de K3s"
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--tls-san ${PUBLIC_IP}" sh -
+
+mkdir -p "$HOME/.kube"
+sudo cp /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"
+sudo chown "$USER":"$USER" "$HOME/.kube/config"
+export KUBECONFIG="$HOME/.kube/config"
+grep -q KUBECONFIG "$HOME/.bashrc" || \
+  echo 'export KUBECONFIG=$HOME/.kube/config' >> "$HOME/.bashrc"
+
+# K3s peut mettre quelques secondes avant de declarer le noeud
+until kubectl get nodes >/dev/null 2>&1; do sleep 3; done
+kubectl wait --for=condition=Ready nodes --all --timeout=180s
+
+echo "==> Deploiement du registry prive"
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gandal-system
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-pvc
+  namespace: gandal-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: private-registry
+  namespace: gandal-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+      - name: registry
+        image: registry:2
+        ports:
+        - containerPort: 5000
+          hostPort: 5000
+        volumeMounts:
+        - name: registry-storage
+          mountPath: /var/lib/registry
+      volumes:
+      - name: registry-storage
+        persistentVolumeClaim:
+          claimName: registry-pvc
+EOF
+kubectl -n gandal-system rollout status deploy/private-registry --timeout=180s
+
+echo "==> Environnement Python pour le script PaaS"
+python3 -m venv "$HOME/gandal-venv"
+"$HOME/gandal-venv/bin/pip" install --quiet kubernetes
+
+echo
+echo "Installation terminee."
+echo "Reconnectez-vous (ou 'newgrp docker') pour utiliser docker sans sudo."
+echo "Test registry : curl http://localhost:5000/v2/_catalog"
+echo "Script PaaS   : source ~/gandal-venv/bin/activate && python gandal_deploy.py --help"
+\end{lstlisting}
+
+\subsection{Vérification}
+\begin{lstlisting}[language=bash]
+kubectl get nodes          # le noeud doit etre Ready
+kubectl get pods -A        # traefik, coredns, metrics-server en Running
+\end{lstlisting}
+
+\subsection{Remarque sur l'adresse IP du certificat}
+L'option \texttt{--tls-san} enregistre l'adresse IP dans le certificat de l'API Kubernetes. Elle ne concerne que l'accès à distance avec \texttt{kubectl} depuis un autre poste. Si l'adresse change, il suffit d'ajouter la nouvelle valeur à \texttt{tls-san} (dans \nolinkurl{/etc/rancher/k3s/config.yaml}) et de redémarrer K3s ; une réinstallation n'est pas nécessaire.
+
+% ==========================================
+\section{Phase 3 : Registry d'images privé}
+
+\subsection{But}
+Héberger les images Docker des utilisateurs dans le cluster, sans GitLab pour l'instant.
+
+\subsection{Principe d'accès}
+Le registry est déployé par \texttt{install.sh} (manifeste identique à \texttt{registry.yaml}). Il écoute sur le port 5000 \textbf{de la VM} grâce à \texttt{hostPort}. Ainsi, \nolinkurl{localhost:5000} fonctionne à la fois pour \texttt{docker push} (depuis la VM) et pour les téléchargements d'images effectués par K3s.
+
+\subsection{Test}
+\begin{lstlisting}[language=bash]
+sudo docker pull nginx:alpine
+sudo docker tag nginx:alpine localhost:5000/my-api:v1
+sudo docker push localhost:5000/my-api:v1
+curl http://localhost:5000/v2/_catalog     # doit lister my-api
+\end{lstlisting}
+
+\textbf{Remarques.}
+\begin{itemize}
+    \item L'image \texttt{nginx:alpine} écoute sur le port \textbf{80}. Les tests de ce document utilisent donc le port 80.
+    \item Les images de test (\texttt{nginx:alpine}, \texttt{curlimages/curl}) sont téléchargées depuis Docker Hub. Sur un réseau isolé, elles doivent être fournies autrement (voir Phase~9).
+    \item Le registry n'a ni authentification ni TLS : tout pod du cluster peut y lire ou y écrire. C'est acceptable pour la simulation, pas pour la production.
+\end{itemize}
+
+% ==========================================
+\section{Phase 4 : Isolation, quotas et sécurité réseau}
+
+\subsection{But}
+Chaque projet utilisateur obtient un espace isolé et plafonné. Ces objets sont créés \textbf{automatiquement par \texttt{gandal\_deploy.py}} à la première création d'application d'un projet ; ils ne sont pas appliqués à la main.
+
+\subsection{Objets créés pour chaque projet}
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Objet} & \textbf{Nom} & \textbf{Rôle} \\
+\midrule
+Namespace & \nolinkurl{project-<user>-<projet>} & Unité d'isolation et de propriété \\
+LimitRange & \texttt{default-limits} & Valeurs CPU/RAM par défaut des conteneurs \\
+ResourceQuota & \texttt{project-quota} & Plafond global du projet (4 pods par défaut) \\
+NetworkPolicy & \texttt{isolate-ingress} & Bloque le trafic entrant venant d'autres projets \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Règle de la NetworkPolicy}
+Sont autorisés en entrée : (1) les pods du \textbf{même namespace}, afin qu'une application puisse parler à sa base de données ; (2) le namespace \texttt{kube-system}, où tourne Traefik, afin que le trafic web atteigne l'application. Tout le reste est refusé.
+
+\begin{lstlisting}[language=yaml]
+# Resultat applique par le script (reference)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: isolate-ingress
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - podSelector: {}
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+\end{lstlisting}
+
+\textbf{Application des règles.} K3s embarque un contrôleur de NetworkPolicy (kube-router) : l'isolation fonctionne par défaut. Cela cesse d'être vrai si un autre CNI est installé ou si ce contrôleur est désactivé ; le test d'isolation du document de cadrage le vérifie en quelques secondes.
+
+\subsection{Mapping utilisateur $\leftrightarrow$ conteneur}
+Toute ressource créée porte les labels suivants :
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Label} & \textbf{Signification} \\
+\midrule
+\texttt{gandal.io/owner} & Utilisateur propriétaire \\
+\texttt{gandal.io/project} & Projet \\
+\texttt{gandal.io/app} & Application \\
+\bottomrule
+\end{tabular}
+\end{center}
+Ces labels sont présents sur le namespace, le Deployment, les \textbf{pods}, le Service et l'Ingress. Ils permettent de retrouver tous les pods (et leurs adresses IP) d'un utilisateur par un simple sélecteur.
+
+% ==========================================
+\section{Phase 5 : Convention de nommage}
+
+Une convention unique est utilisée partout (script, tests, documentation). Les valeurs \nolinkurl{<user>}, \nolinkurl{<projet>} et \nolinkurl{<app>} doivent respecter le format DNS-1123 (minuscules, chiffres, tirets) et faire 20 caractères maximum.
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Ressource} & \textbf{Nom} \\
+\midrule
+Namespace & \nolinkurl{project-<user>-<projet>} \\
+Deployment, Service, Ingress & \nolinkurl{<app>} \\
+Nom DNS externe & \nolinkurl{<app>-<projet>-<user>.<domaine>} \\
+Nom DNS interne au cluster & \nolinkurl{<app>.project-<user>-<projet>.svc.cluster.local} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Exemple : l'application \texttt{my-api} du projet \texttt{memoire} de l'utilisateur \texttt{alice} est servie sur \nolinkurl{my-api-memoire-alice.gandal.test}.
+
+% ==========================================
+\section{Phase 6 : DNS et exposition}
+
+\subsection{But}
+Rendre chaque application accessible par un nom de domaine, sans Route 53.
+
+\subsection{Principe}
+Un seul enregistrement \textbf{wildcard} pointe vers l'IP de la VM : \nolinkurl{*.gandal.test}. Le script crée ensuite un \textbf{Ingress} par application ; Traefik route selon le nom d'hôte. Le DNS n'est donc configuré qu'une seule fois, quel que soit le nombre d'applications.
+
+Le fichier \texttt{/etc/hosts} ne supporte pas les wildcards : il n'est pas utilisé ici.
+
+\subsection{Option A : sslip.io (zéro configuration)}
+Définir le domaine de base sur \nolinkurl{<ELASTIC_IP>.sslip.io}. Tout nom de la forme \nolinkurl{x.<ELASTIC_IP>.sslip.io} se résout automatiquement vers l'IP indiquée.
+\begin{lstlisting}[language=bash]
+export GANDAL_BASE_DOMAIN="<ELASTIC_IP>.sslip.io"
+\end{lstlisting}
+
+\subsection{Option B : dnsmasq sur votre PC (domaine \texttt{gandal.test})}
+Sur un PC Ubuntu utilisant NetworkManager :
+\begin{lstlisting}[language=bash]
+sudo apt install -y dnsmasq-base
+sudo sed -i 's/^\[main\]/[main]\ndns=dnsmasq/' /etc/NetworkManager/NetworkManager.conf
+echo "address=/gandal.test/<ELASTIC_IP>" | \
+  sudo tee /etc/NetworkManager/dnsmasq.d/gandal.conf
+sudo systemctl restart NetworkManager
+getent hosts test.gandal.test       # doit renvoyer l'Elastic IP
+\end{lstlisting}
+
+\subsection{Remarque}
+CoreDNS est le DNS \textbf{interne} du cluster (résolution des Services entre pods). Il n'intervient pas dans l'accès externe des clients, qui repose sur le wildcard ci-dessus.
+
+% ==========================================
+\section{Phase 7 : Automatisation, le cœur du PaaS}
+
+\subsection{But}
+Le script \texttt{gandal\_deploy.py} fournit quatre commandes :
+\begin{itemize}
+    \item \texttt{deploy} : crée ou met à jour le namespace, les quotas, l'isolation, le Deployment, le Service et l'Ingress ;
+    \item \texttt{list} : liste les pods avec leur propriétaire, leur statut et leur \textbf{adresse IP} ;
+    \item \texttt{status} : état d'une application (réplicas prêts, URL, IP des pods) ;
+    \item \texttt{delete} : supprime une application, ou tout le projet avec \texttt{--purge}.
+\end{itemize}
+
+Le script est \textbf{idempotent} : relancer \texttt{deploy} met à jour la ressource existante (nouvelle image, nouveau nombre de réplicas) au lieu de l'ignorer. Les valeurs dépendantes de l'environnement sont lues dans les variables \nolinkurl{GANDAL_BASE_DOMAIN}, \nolinkurl{GANDAL_INGRESS_CLASS}, \nolinkurl{GANDAL_REPLICAS} et \nolinkurl{GANDAL_QUOTA_*}.
+
+\subsection{Utilisation}
+\begin{lstlisting}[language=bash]
+source ~/gandal-venv/bin/activate
+python gandal_deploy.py deploy alice memoire my-api localhost:5000/my-api:v1 80
+python gandal_deploy.py list --user alice
+python gandal_deploy.py status alice memoire my-api
+python gandal_deploy.py delete alice memoire my-api
+python gandal_deploy.py delete alice memoire --purge
+\end{lstlisting}
+
+Le script s'exécute sur la VM. Pour le lancer depuis votre PC, copier \texttt{\textasciitilde/.kube/config}, remplacer \nolinkurl{127.0.0.1} par l'Elastic IP dans le champ \texttt{server}, et ouvrir le port 6443 à votre IP.
+
+\subsection{Code}
+\begin{lstlisting}[language=Python]
+#!/usr/bin/env python3
+"""GANDAL PaaS (simulation) : deploy / list / status / delete."""
+import argparse
+import os
+import re
+import sys
+
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+
+BASE_DOMAIN = os.getenv("GANDAL_BASE_DOMAIN", "gandal.test")
+INGRESS_CLASS = os.getenv("GANDAL_INGRESS_CLASS", "traefik")
+REPLICAS = int(os.getenv("GANDAL_REPLICAS", "2"))
+QUOTA = {
+    "requests.cpu": os.getenv("GANDAL_QUOTA_REQ_CPU", "1"),
+    "requests.memory": os.getenv("GANDAL_QUOTA_REQ_MEM", "1Gi"),
+    "limits.cpu": os.getenv("GANDAL_QUOTA_LIM_CPU", "2"),
+    "limits.memory": os.getenv("GANDAL_QUOTA_LIM_MEM", "2Gi"),
+    "pods": os.getenv("GANDAL_QUOTA_PODS", "4"),
+}
+NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+
+
+def check(label, value):
+    if not NAME_RE.match(value) or len(value) > 20:
+        sys.exit(f"{label} invalide '{value}' : minuscules, chiffres, "
+                 "tirets, 20 caracteres max")
+
+
+def ns_of(user, project):
+    return f"project-{user}-{project}"
+
+
+def host_of(user, project, app):
+    return f"{app}-{project}-{user}.{BASE_DOMAIN}"
+
+
+def labels(user, project, app=None):
+    d = {"gandal.io/owner": user, "gandal.io/project": project}
+    if app:
+        d["gandal.io/app"] = app
+    return d
+
+
+def upsert(create, patch, name, body):
+    """Cree la ressource ; si elle existe deja (409), la met a jour."""
+    try:
+        create(body)
+        print(f"  cree    : {name}")
+    except ApiException as e:
+        if e.status != 409:
+            raise
+        patch(name, body)
+        print(f"  a jour  : {name}")
+
+
+def deploy(a):
+    for label, value in (("user", a.user), ("projet", a.project),
+                         ("app", a.app)):
+        check(label, value)
+    config.load_kube_config()
+    v1, apps, net = (client.CoreV1Api(), client.AppsV1Api(),
+                     client.NetworkingV1Api())
+    ns = ns_of(a.user, a.project)
+    lab = labels(a.user, a.project, a.app)
+    print(f"Deploiement de {a.app} dans {ns}")
+
+    # 1. Namespace (porte owner et project)
+    upsert(v1.create_namespace, lambda n, b: v1.patch_namespace(n, b), ns,
+           {"metadata": {"name": ns, "labels": labels(a.user, a.project)}})
+
+    # 2. LimitRange : valeurs par defaut des conteneurs
+    upsert(lambda b: v1.create_namespaced_limit_range(ns, b),
+           lambda n, b: v1.patch_namespaced_limit_range(n, ns, b),
+           "default-limits",
+           {"metadata": {"name": "default-limits"},
+            "spec": {"limits": [{
+                "type": "Container",
+                "default": {"cpu": "500m", "memory": "512Mi"},
+                "defaultRequest": {"cpu": "100m", "memory": "128Mi"}}]}})
+
+    # 3. ResourceQuota : plafond du projet
+    upsert(lambda b: v1.create_namespaced_resource_quota(ns, b),
+           lambda n, b: v1.patch_namespaced_resource_quota(n, ns, b),
+           "project-quota",
+           {"metadata": {"name": "project-quota"}, "spec": {"hard": QUOTA}})
+
+    # 4. NetworkPolicy : meme namespace + kube-system (Traefik)
+    upsert(lambda b: net.create_namespaced_network_policy(ns, b),
+           lambda n, b: net.patch_namespaced_network_policy(n, ns, b),
+           "isolate-ingress",
+           {"metadata": {"name": "isolate-ingress"},
+            "spec": {"podSelector": {}, "policyTypes": ["Ingress"],
+                     "ingress": [
+                         {"from": [{"podSelector": {}}]},
+                         {"from": [{"namespaceSelector": {"matchLabels": {
+                             "kubernetes.io/metadata.name":
+                                 "kube-system"}}}]}]}})
+
+    # 5. Deployment (labels de propriete sur les pods)
+    probe = {"tcpSocket": {"port": a.port}, "periodSeconds": 5}
+    upsert(lambda b: apps.create_namespaced_deployment(ns, b),
+           lambda n, b: apps.patch_namespaced_deployment(n, ns, b),
+           a.app,
+           {"metadata": {"name": a.app, "labels": lab},
+            "spec": {
+                "replicas": a.replicas,
+                "selector": {"matchLabels": {"gandal.io/app": a.app}},
+                "template": {
+                    "metadata": {"labels": lab},
+                    "spec": {"containers": [{
+                        "name": a.app, "image": a.image,
+                        "ports": [{"containerPort": a.port}],
+                        "readinessProbe": dict(probe,
+                                               initialDelaySeconds=3),
+                        "livenessProbe": dict(probe,
+                                              initialDelaySeconds=10),
+                        "resources": {
+                            "requests": {"cpu": "100m",
+                                         "memory": "128Mi"},
+                            "limits": {"cpu": "500m",
+                                       "memory": "512Mi"}}}]}}}})
+
+    # 6. Service (nom stable a l'interieur du cluster)
+    upsert(lambda b: v1.create_namespaced_service(ns, b),
+           lambda n, b: v1.patch_namespaced_service(n, ns, b),
+           a.app,
+           {"metadata": {"name": a.app, "labels": lab},
+            "spec": {"selector": {"gandal.io/app": a.app},
+                     "ports": [{"port": 80, "targetPort": a.port}]}})
+
+    # 7. Ingress (nom DNS externe)
+    host = host_of(a.user, a.project, a.app)
+    upsert(lambda b: net.create_namespaced_ingress(ns, b),
+           lambda n, b: net.patch_namespaced_ingress(n, ns, b),
+           a.app,
+           {"metadata": {"name": a.app, "labels": lab},
+            "spec": {"ingressClassName": INGRESS_CLASS,
+                     "rules": [{"host": host, "http": {"paths": [{
+                         "path": "/", "pathType": "Prefix",
+                         "backend": {"service": {
+                             "name": a.app,
+                             "port": {"number": 80}}}}]}}]}})
+
+    print(f"Succes. Acces : http://{host}")
+
+
+def list_pods(a):
+    config.load_kube_config()
+    v1 = client.CoreV1Api()
+    sel = f"gandal.io/owner={a.user}" if a.user else "gandal.io/owner"
+    pods = v1.list_pod_for_all_namespaces(label_selector=sel).items
+    print(f"{'OWNER':12}{'PROJECT':14}{'APP':16}{'POD':40}"
+          f"{'STATUS':10}IP")
+    for p in pods:
+        lb = p.metadata.labels or {}
+        print(f"{lb.get('gandal.io/owner', ''):12}"
+              f"{lb.get('gandal.io/project', ''):14}"
+              f"{lb.get('gandal.io/app', ''):16}"
+              f"{p.metadata.name:40}{p.status.phase:10}"
+              f"{p.status.pod_ip or '-'}")
+
+
+def status(a):
+    config.load_kube_config()
+    v1, apps = client.CoreV1Api(), client.AppsV1Api()
+    ns = ns_of(a.user, a.project)
+    d = apps.read_namespaced_deployment(a.app, ns)
+    print(f"Replicas prets : {d.status.ready_replicas or 0}/{d.spec.replicas}")
+    print(f"URL            : http://{host_of(a.user, a.project, a.app)}")
+    pods = v1.list_namespaced_pod(
+        ns, label_selector=f"gandal.io/app={a.app}").items
+    for p in pods:
+        print(f"Pod {p.metadata.name} : {p.status.phase}, "
+              f"IP {p.status.pod_ip}")
+
+
+def delete(a):
+    config.load_kube_config()
+    v1, apps, net = (client.CoreV1Api(), client.AppsV1Api(),
+                     client.NetworkingV1Api())
+    ns = ns_of(a.user, a.project)
+    if a.purge:
+        v1.delete_namespace(ns)
+        print(f"Projet {ns} supprime")
+        return
+    if not a.app:
+        sys.exit("indiquer l'application, ou utiliser --purge")
+    for fn in (lambda: net.delete_namespaced_ingress(a.app, ns),
+               lambda: v1.delete_namespaced_service(a.app, ns),
+               lambda: apps.delete_namespaced_deployment(a.app, ns)):
+        try:
+            fn()
+        except ApiException as e:
+            if e.status != 404:
+                raise
+    print(f"Application {a.app} supprimee")
+
+
+def main():
+    p = argparse.ArgumentParser(description="GANDAL PaaS (simulation)")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    d = sub.add_parser("deploy", help="creer ou mettre a jour une application")
+    for n in ("user", "project", "app", "image"):
+        d.add_argument(n)
+    d.add_argument("port", type=int)
+    d.add_argument("--replicas", type=int, default=REPLICAS)
+    d.set_defaults(fn=deploy)
+
+    ls = sub.add_parser("list", help="lister les pods avec proprietaire et IP")
+    ls.add_argument("--user")
+    ls.set_defaults(fn=list_pods)
+
+    s = sub.add_parser("status", help="etat d'une application")
+    for n in ("user", "project", "app"):
+        s.add_argument(n)
+    s.set_defaults(fn=status)
+
+    x = sub.add_parser("delete", help="supprimer une application ou un projet")
+    x.add_argument("user")
+    x.add_argument("project")
+    x.add_argument("app", nargs="?")
+    x.add_argument("--purge", action="store_true")
+    x.set_defaults(fn=delete)
+
+    args = p.parse_args()
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()
+\end{lstlisting}
+
+% ==========================================
+\section{Phase 8 : Validation et résilience}
+
+Les tests détaillés figurent dans le document de cadrage. Les commandes de base :
+
+\begin{lstlisting}[language=bash]
+# Self-healing : supprimer un pod, Kubernetes le recree
+kubectl delete pod -n project-alice-memoire -l gandal.io/app=my-api
+kubectl get pods -n project-alice-memoire -w
+
+# Metriques (metrics-server est inclus dans K3s)
+kubectl top pods -n project-alice-memoire
+
+# Logs applicatifs
+kubectl logs -n project-alice-memoire -l gandal.io/app=my-api
+
+# IP des pods d'un utilisateur
+python gandal_deploy.py list --user alice
+\end{lstlisting}
+
+% ==========================================
+\section{Phase 9 : Passage à GANDAL (XCP-ng)}
+
+\subsection{Ce qui ne change pas}
+Le manifeste du registry, la logique du script Python, les Namespaces, quotas, NetworkPolicies, labels et Ingress, ainsi que le script \texttt{install.sh}.
+
+\subsection{Ce qui change}
+\begin{center}
+\begin{tabular}{p{4cm}p{4.4cm}p{5.2cm}}
+\toprule
+\textbf{Élément} & \textbf{AWS (simulation)} & \textbf{GANDAL (XCP-ng)} \\
+\midrule
+Adresse d'entrée & Elastic IP (NAT AWS) & IP de la VM fournie par Système/Réseau \\
+Domaine & \nolinkurl{gandal.test} ou sslip.io & Domaine GANDAL, wildcard géré par l'équipe Réseau \\
+Variable à modifier & \nolinkurl{GANDAL_BASE_DOMAIN} & idem \\
+TLS (HTTPS) & Absent & cert-manager ou certificats fournis \\
+Registry & HTTP sans authentification & TLS et authentification (ou registry GitLab plus tard) \\
+Pare-feu & Security Group & Règles Réseau/Sécurité \\
+Accès Internet sortant & Libre & À vérifier : \texttt{install.sh} télécharge K3s, des paquets et des images \\
+CNI et NetworkPolicies & kube-router intégré à K3s & Valable tant qu'aucun autre CNI n'est installé ; sinon vérifier \\
+Adresse IP du certificat & \texttt{--tls-san} avec l'Elastic IP & Idem avec l'IP de la VM ; ajouter toute nouvelle IP puis redémarrer K3s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Si le réseau GANDAL est isolé d'Internet}
+Les téléchargements de \texttt{install.sh} (paquets apt, script et binaire K3s, image \texttt{registry:2}) et des tests (\texttt{nginx:alpine}, \texttt{curlimages/curl}) échoueront. Dans ce cas :
+\begin{itemize}
+    \item demander à Système/Réseau quelles sorties sont autorisées (ou un miroir interne) ;
+    \item préparer les images sur une machine connectée avec \texttt{docker save}, les copier sur la VM, les charger avec \texttt{docker load}, puis les pousser dans le registry local ;
+    \item utiliser l'installation hors ligne de K3s (binaire et images fournis à l'avance).
+\end{itemize}
+
+\subsection{Procédure}
+\begin{enumerate}
+    \item Recevoir la VM et son IP.
+    \item Vérifier l'accès Internet sortant (ou préparer l'installation hors ligne).
+    \item Exécuter \texttt{install.sh} avec cette IP.
+    \item Définir \nolinkurl{GANDAL_BASE_DOMAIN} et faire créer le wildcard DNS par l'équipe Réseau.
+    \item Relancer les tests de validation du document de cadrage.
+\end{enumerate}
+
+% ==========================================
+\section{Conclusion}
+
+Cette procédure donne à la cellule PaaS un prototype conforme aux exigences : déploiements par conteneurs, orchestration par Kubernetes, association utilisateur--pods par labels, récupération des adresses IP des pods, et nom DNS d'accès par application. La migration vers XCP-ng se limite à relancer \texttt{install.sh} et à ajuster les variables et points listés à la Phase~9.
+
+\end{document}

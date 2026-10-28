@@ -1,0 +1,261 @@
+\documentclass[12pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\geometry{top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{tcolorbox}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdftitle={GANDAL PaaS - Cadrage et Validation de la Simulation - v3},
+}
+
+% --- Affichage du code ---
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+% Le langage YAML n'est pas fourni par listings : definition necessaire
+\lstdefinelanguage{yaml}{
+  keywords={true,false,null,y,n},
+  sensitive=false,
+  comment=[l]{\#},
+  morestring=[b]',
+  morestring=[b]"
+}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+\lstset{style=mystyle}
+\lstset{literate=
+  {é}{{\'e}}1 {è}{{\`e}}1 {ê}{{\^e}}1 {ë}{{\"e}}1
+  {à}{{\`a}}1 {â}{{\^a}}1 {î}{{\^i}}1 {ï}{{\"i}}1
+  {ô}{{\^o}}1 {ù}{{\`u}}1 {û}{{\^u}}1 {ç}{{\c c}}1
+  {É}{{\'E}}1 {È}{{\`E}}1 {À}{{\`A}}1 {œ}{{\oe}}1
+}
+
+% --- Titres ---
+\titleformat{\section}{\Large\bfseries\color{blue!80!black}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{blue!60!black}}{\thesubsection}{1em}{}
+
+% --- Page de garde ---
+\title{
+    \vspace{2cm}
+    \textbf{\Huge Projet GANDAL} \\
+    \vspace{0.5cm}
+    \Large{Cadrage et validation de la simulation} \\
+    \vspace{1cm}
+    \large{Compréhension du périmètre, état final et tests de réussite} \\
+    \vspace{0.5cm}
+    \normalsize{Version 3}
+}
+\author{\textbf{Cellule PaaS}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+% ==========================================
+\section{Comprendre son périmètre : ce que je fais et ce que je ne fais pas}
+
+Le projet GANDAL est vaste et fait intervenir plusieurs équipes. En tant que membre de la cellule PaaS, votre mission lors de cette simulation est strictement délimitée : construire la brique d'infrastructure applicative, c'est-à-dire la grosse VM, Kubernetes qui gère les conteneurs et les pods à la demande, le rattachement de chaque pod à un utilisateur et le nom DNS d'accès.
+
+\subsection{Ce que VOUS devez faire (périmètre « VM et orchestration »)}
+\begin{itemize}
+    \item \textbf{Simuler le matériel} : créer et configurer l'instance EC2 sur AWS (la grosse VM).
+    \item \textbf{Installer Kubernetes} : déployer K3s sur la VM avec \texttt{install.sh} et vérifier que le cluster fonctionne.
+    \item \textbf{Gérer l'entrée réseau} : utiliser l'Ingress Controller (Traefik) pour router le trafic vers les applications selon leur nom DNS.
+    \item \textbf{Déployer un registry privé} : \nolinkurl{registry:2} dans le cluster. Docker sert à construire et publier les images ; Kubernetes les exécute.
+    \item \textbf{Isoler les utilisateurs} : un Namespace par projet, avec ResourceQuota, LimitRange et NetworkPolicy.
+    \item \textbf{Identifier les conteneurs} : labels de propriétaire sur chaque ressource, et récupération des adresses IP des pods d'un utilisateur.
+    \item \textbf{Automatiser le déploiement} : un script Python (\texttt{gandal\_deploy.py}) qui, à partir d'un utilisateur, d'un projet, d'une image et d'un port, crée toutes les ressources Kubernetes nécessaires.
+\end{itemize}
+
+\subsection{Ce que VOUS ne devez PAS faire (le reste du PaaS)}
+\begin{itemize}
+    \item \textbf{Frontend et portail web} : pas d'interface graphique. Vous utilisez la ligne de commande et le script Python.
+    \item \textbf{Backend métier et authentification} : pas de gestion de comptes, pas de base de données d'utilisateurs. L'utilisateur est un simple paramètre du script.
+    \item \textbf{CI/CD GitLab} : pas de pipeline. Les images sont poussées manuellement dans le registry de la VM.
+    \item \textbf{Équipe Système} : vous n'avez pas à gérer XCP-ng ni le matériel physique.
+\end{itemize}
+
+\begin{tcolorbox}[colback=red!5!white,colframe=red!75!black,title=En résumé]
+Votre mission est de prouver que \textbf{la mécanique Kubernetes fonctionne de bout en bout}. Vous êtes le « moteur », pas le « tableau de bord » de la voiture.
+\end{tcolorbox}
+
+% ==========================================
+\section{L'état final attendu : à quoi cela ressemblera à la fin}
+
+À l'issue de la procédure d'implémentation, vous aurez un \textbf{mini-datacenter fonctionnel sur une seule VM}.
+
+\subsection{Un cluster Kubernetes prêt à l'emploi}
+Un nœud K3s opérationnel sur AWS (puis sur une VM XCP-ng), qui exécute déjà Traefik (entrée réseau), CoreDNS (résolution interne) et metrics-server (métriques).
+
+\subsection{Une isolation entre projets}
+Plusieurs projets (par exemple Alice et Bob) cohabitent sur le même serveur. Chacun dispose de son namespace, de ses quotas, et les NetworkPolicies empêchent un projet d'atteindre les pods d'un autre.
+
+\subsection{Une automatisation « PaaS »}
+Une seule commande, exécutée dans un terminal, doit :
+\begin{enumerate}
+    \item créer l'environnement d'Alice (namespace, quotas, isolation) ;
+    \item lancer les conteneurs de son application, avec les labels de propriétaire ;
+    \item créer le Service (adresse stable) et l'Ingress ;
+    \item afficher l'URL d'accès, par exemple \nolinkurl{http://my-api-memoire-alice.gandal.test}.
+\end{enumerate}
+
+\subsection{Une identification complète des conteneurs}
+La commande \texttt{list} affiche, pour chaque pod, son propriétaire, son projet, son application, son statut et son adresse IP.
+
+% ==========================================
+\section{Les tests de réussite (validation du prototype)}
+
+\subsection{Préparation commune}
+Les images de test sont téléchargées depuis Docker Hub puis poussées dans le registry local. Sur un réseau sans accès à Internet, elles doivent être fournies autrement (voir Phase~9 du document de procédure).
+
+\begin{lstlisting}[language=bash]
+# Sur la VM : activer l'environnement Python
+source ~/gandal-venv/bin/activate
+# Domaine de base (sslip.io, ou gandal.test avec dnsmasq)
+export GANDAL_BASE_DOMAIN="gandal.test"
+
+# Image de l'application de test (nginx ecoute sur le port 80)
+sudo docker pull nginx:alpine
+sudo docker tag nginx:alpine localhost:5000/my-api:v1
+sudo docker push localhost:5000/my-api:v1
+
+# Image de la sonde reseau utilisee au test 3
+sudo docker pull curlimages/curl:latest
+sudo docker tag curlimages/curl:latest localhost:5000/curl:latest
+sudo docker push localhost:5000/curl:latest
+\end{lstlisting}
+Le groupe \texttt{docker} ne s'applique qu'après reconnexion : d'où le \texttt{sudo} ci-dessus (inutile après reconnexion ou \texttt{newgrp docker}).
+
+\subsection{Test 1 : le déploiement automatisé fonctionne}
+\textbf{Action} : déployer l'application d'Alice.
+\begin{lstlisting}[language=bash]
+python gandal_deploy.py deploy alice memoire my-api localhost:5000/my-api:v1 80
+kubectl get pods -n project-alice-memoire
+\end{lstlisting}
+\textbf{Résultat attendu} : le script se termine sans erreur et affiche l'URL. La commande \texttt{kubectl get pods} montre 2 pods au statut \texttt{Running} et prêts (\texttt{1/1}).
+
+\subsection{Test 2 : l'accès utilisateur par DNS est opérationnel}
+\textbf{Action} : depuis votre PC, ouvrir le navigateur sur l'URL affichée, ou utiliser curl.
+\begin{lstlisting}[language=bash]
+curl -I http://my-api-memoire-alice.gandal.test
+\end{lstlisting}
+\textbf{Résultat attendu} : réponse HTTP 200 avec la page de l'application. Cela prouve que le wildcard DNS, l'Ingress (Traefik) et le Service fonctionnent ensemble.
+
+\subsection{Test 3 : l'isolation réseau est stricte}
+\textbf{Action} : déployer un second projet (Bob), puis tenter d'atteindre l'application d'Alice depuis un pod de Bob, et depuis un pod d'Alice (témoin).
+
+Les pods de sonde reçoivent les labels de propriété, pour rester identifiables avec \texttt{list}. Ils consomment temporairement un emplacement du quota ; l'option \texttt{--rm} les supprime à la fin. Ce test doit donc être fait \textbf{avant} le test 5, qui sature le quota.
+
+\begin{lstlisting}[language=bash]
+python gandal_deploy.py deploy bob test web localhost:5000/my-api:v1 80
+
+# Depuis le namespace de Bob : doit ECHOUER (timeout, code 000)
+kubectl run probe -n project-bob-test \
+  --labels="gandal.io/owner=bob,gandal.io/project=test" \
+  --rm -i --restart=Never --image=localhost:5000/curl:latest -- \
+  curl -s -m 5 -o /dev/null -w "%{http_code}\n" \
+  http://my-api.project-alice-memoire.svc.cluster.local
+
+# Depuis le namespace d'Alice : doit REUSSIR (code 200)
+kubectl run probe -n project-alice-memoire \
+  --labels="gandal.io/owner=alice,gandal.io/project=memoire" \
+  --rm -i --restart=Never --image=localhost:5000/curl:latest -- \
+  curl -s -m 5 -o /dev/null -w "%{http_code}\n" \
+  http://my-api.project-alice-memoire.svc.cluster.local
+\end{lstlisting}
+\textbf{Résultat attendu} : le premier appel échoue (délai dépassé, code 000), le second renvoie 200. Le témoin prouve que l'échec vient bien de la NetworkPolicy et non d'une panne.
+
+\subsection{Test 4 : la résilience (self-healing)}
+\textbf{Action} : supprimer manuellement un pod d'Alice.
+\begin{lstlisting}[language=bash]
+kubectl delete pod -n project-alice-memoire -l gandal.io/app=my-api --wait=false
+kubectl get pods -n project-alice-memoire -w
+\end{lstlisting}
+\textbf{Résultat attendu} : les pods supprimés sont recréés en quelques secondes et repassent \texttt{Running}. Pendant ce temps l'application reste accessible, car le Service ne route que vers les pods prêts.
+
+\subsection{Test 5 : les quotas de ressources sont respectés}
+\textbf{Action} : demander 10 réplicas alors que le quota autorise 4 pods.
+\begin{lstlisting}[language=bash]
+kubectl scale deployment my-api --replicas=10 -n project-alice-memoire
+kubectl get deployment my-api -n project-alice-memoire
+kubectl describe quota project-quota -n project-alice-memoire
+kubectl describe rs -n project-alice-memoire | grep -i quota
+\end{lstlisting}
+\textbf{Résultat attendu} : Kubernetes accepte la demande de 10 réplicas, mais n'en crée que 4 : le Deployment affiche \texttt{4/10}. Le quota indique \texttt{pods} utilisés 4 pour un maximum de 4, et les événements du ReplicaSet montrent une erreur de dépassement de quota (\texttt{exceeded quota}). Pour revenir à l'état normal : relancer la commande \texttt{deploy} du test 1, qui remet 2 réplicas.
+
+\subsection{Test 6 : les métriques sont disponibles}
+\begin{lstlisting}[language=bash]
+kubectl top pods -n project-alice-memoire
+\end{lstlisting}
+\textbf{Résultat attendu} : la consommation CPU (en millicores) et RAM (en Mi) de chaque pod. Les données nécessaires au monitoring sont donc disponibles nativement. Le premier relevé peut prendre une minute après le démarrage des pods.
+
+\subsection{Test 7 : identification des conteneurs et adresses IP}
+\textbf{Action} : lister les pods d'un utilisateur.
+\begin{lstlisting}[language=bash]
+python gandal_deploy.py list --user alice
+python gandal_deploy.py status alice memoire my-api
+\end{lstlisting}
+\textbf{Résultat attendu} : chaque pod est affiché avec son propriétaire (\texttt{alice}), son projet, son application, son statut et son adresse IP. Les pods de Bob n'apparaissent pas dans la liste d'Alice. Cela valide l'exigence « chaque conteneur appartient à un utilisateur ».
+
+\subsection{Test 8 : mise à jour idempotente}
+\textbf{Action} : relancer \texttt{deploy} avec une nouvelle image ou un autre nombre de réplicas.
+\begin{lstlisting}[language=bash]
+python gandal_deploy.py deploy alice memoire my-api localhost:5000/my-api:v1 80 --replicas 3
+\end{lstlisting}
+\textbf{Résultat attendu} : le script affiche « a jour » pour les ressources existantes, sans erreur, et le Deployment passe à 3 réplicas.
+
+\subsection{Test 9 : nettoyage}
+\begin{lstlisting}[language=bash]
+python gandal_deploy.py delete bob test --purge
+kubectl get ns | grep project-bob     # le namespace disparait
+\end{lstlisting}
+\textbf{Résultat attendu} : le projet de Bob et toutes ses ressources sont supprimés, sans effet sur ceux d'Alice.
+
+% ==========================================
+\section{Conclusion}
+
+Si tous ces tests passent, l'objectif de la simulation est atteint : le socle technique du PaaS GANDAL (VM unique, Kubernetes, conteneurs et pods à la demande, rattachement à un utilisateur, DNS d'accès) est viable.
+
+Lorsque l'équipe Système fournira la VM sur XCP-ng, la migration consiste à vérifier l'accès Internet sortant, à relancer \texttt{install.sh}, à définir la variable \nolinkurl{GANDAL_BASE_DOMAIN} et à faire créer le wildcard DNS par l'équipe Réseau. La liste exacte de ce qui change (adresse IP, domaine, TLS, registry sécurisé, accès Internet, CNI) figure à la Phase~9 du document de procédure.
+
+\end{document}

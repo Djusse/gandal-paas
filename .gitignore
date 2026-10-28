@@ -1,0 +1,30 @@
+# LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.xdv
+
+# Build
+/tmp/
+build/
+
+# Secrets et accès
+*.pem
+*.key
+.env
+kubeconfig
+.kube/
+
+# Python
+__pycache__/
+*.pyc
+gandal-venv/
+.venv/
+
+# Divers
+.DS_Store
+*.swp
