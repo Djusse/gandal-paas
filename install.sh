@@ -56,9 +56,20 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--tls-san ${PUBLIC_IP}" sh -
 mkdir -p "$HOME/.kube"
 sudo cp /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"
 sudo chown "$USER":"$USER" "$HOME/.kube/config"
+chmod 600 "$HOME/.kube/config"
 export KUBECONFIG="$HOME/.kube/config"
-grep -q KUBECONFIG "$HOME/.bashrc" || \
-  echo 'export KUBECONFIG=$HOME/.kube/config' >> "$HOME/.bashrc"
+
+# Ubuntu source ~/.bashrc dans les sessions SSH, MAIS le fichier par defaut
+# sort immediatement si le shell n'est pas interactif : un export place en fin
+# de fichier ne serait jamais atteint par "ssh hote 'kubectl ...'".
+# On l'insere donc en tete, et on double dans ~/.profile.
+if ! grep -q 'KUBECONFIG=' "$HOME/.bashrc" 2>/dev/null; then
+  printf '%s\n' 'export KUBECONFIG="$HOME/.kube/config"' \
+    | cat - "$HOME/.bashrc" > "$HOME/.bashrc.tmp" \
+    && mv "$HOME/.bashrc.tmp" "$HOME/.bashrc"
+fi
+grep -q 'KUBECONFIG=' "$HOME/.profile" 2>/dev/null || \
+  echo 'export KUBECONFIG="$HOME/.kube/config"' >> "$HOME/.profile"
 
 # K3s peut mettre quelques secondes avant de declarer le noeud.
 # Attente bornee : au-dela de 180 s on echoue explicitement au lieu de boucler
