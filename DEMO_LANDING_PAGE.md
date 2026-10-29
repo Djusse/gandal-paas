@@ -27,13 +27,49 @@ Le principe de la démo : **tout ce qui est risqué se prépare avant ; en direc
 
 ---
 
-## 1. Préparation (la veille, 10 min)
+## 0. Se connecter à la VM (à faire à chaque nouvelle session CloudShell)
 
-### 1.1 Se connecter à la VM
+> **CloudShell attribue une nouvelle IP à chaque session.** Le Security Group bloque cette nouvelle IP par défaut — c'est pourquoi SSH donne `Connection timed out` au retour.
+
+### Étape 1 — Rouvrir le port SSH depuis CloudShell
+
+```bash
+cd ~/gandal-paas
+./scripts/open-sg.sh
+```
+
+Le script détecte automatiquement la nouvelle IP de la session et l'ajoute au Security Group pour les ports 22 et 6443.
+
+Résultat attendu :
+
+```
+IP detectee : 1.2.3.4
+==> Ouverture de 22 et 6443 pour 1.2.3.4/32 sur sg-xxx
+    port 22 : autorise
+    port 6443 : autorise
+```
+
+### Étape 2 — Se connecter à la VM
 
 ```bash
 ssh -i ~/gandal ubuntu@16.170.20.250
 ```
+
+> **Si `~/gandal` n'existe plus** (CloudShell réinitialise parfois le home), recréer la clé ou utiliser `repair-access.sh` :
+> ```bash
+> # Recréer la clé sur CloudShell
+> ssh-keygen -t ed25519 -f ~/gandal -N "" -C gandal-paas
+> # Puis réinjecter la clé publique via EC2 Instance Connect
+> ./scripts/repair-access.sh "$(cat ~/gandal.pub)"
+> ```
+
+---
+
+## 1. Préparation (la veille, 10 min)
+
+### 1.1 Se connecter à la VM
+
+Voir section 0 ci-dessus si SSH donne `Connection timed out`.
 
 ### 1.2 Tirer et pousser les deux images dans le registry local
 
@@ -305,7 +341,7 @@ Les quotas sont par namespace, mais la mémoire du nœud est partagée. Des name
 | Pods en `ImagePullBackOff` | Nom d'image incorrect | `kubectl describe pod -n project-alice-demo \| grep -A5 Events` |
 | Pods en `Pending` | Mémoire insuffisante | Purger les autres namespaces, puis `kubectl describe pod` |
 | `deploy` échoue | Kubeconfig absent | `export KUBECONFIG=$HOME/.kube/config` |
-| VM injoignable | Instance arrêtée | Montrer les captures d'écran préparées + `VALIDATION_REPORT.md` |
+| VM injoignable | Instance arrêtée ou IP CloudShell changée | `cd ~/gandal-paas && ./scripts/open-sg.sh` puis `ssh -i ~/gandal ubuntu@16.170.20.250` |
 
 **Prépare toujours une capture d'écran de la page et de la sortie du `deploy`.** `VALIDATION_REPORT.md` atteste des 9 tests passés et constitue une preuve solide même si le live échoue.
 
