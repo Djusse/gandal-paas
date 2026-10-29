@@ -28,13 +28,18 @@ ssh -i ~/gandal ubuntu@16.170.20.250
 
 ### 1.2 Créer la landing page
 
+Copie-colle les trois blocs suivants **dans l'ordre** dans le terminal SSH. Chaque bloc est une commande complète.
+
+**Créer le dossier :**
+
 ```bash
 mkdir -p ~/landing && cd ~/landing
 ```
 
-Contenu de `index.html` — **CSS inline, zéro dépendance externe** : aucune police, aucun CDN, donc aucun risque de page blanche si le réseau de la salle filtre :
+**Créer `index.html`** — CSS inline, zéro dépendance externe :
 
-```html
+```bash
+cat > ~/landing/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -62,30 +67,39 @@ Contenu de `index.html` — **CSS inline, zéro dépendance externe** : aucune p
 </head>
 <body>
 <main>
-  <span class="tag">Déployé par GANDAL PaaS</span>
+  <span class="tag">Deploye par GANDAL PaaS</span>
   <h1>Votre application, en une commande.</h1>
   <p>Cette page tourne dans un conteneur nginx, sur un pod Kubernetes,
-     créé automatiquement dans un namespace isolé — avec ses quotas,
+     cree automatiquement dans un namespace isole avec ses quotas,
      sa NetworkPolicy et son nom DNS.</p>
-
   <div class="grid">
-    <div class="card"><b>2</b><span>réplicas actifs</span></div>
-    <div class="card"><b>1</b><span>commande tapée</span></div>
-    <div class="card"><b>0</b><span>YAML écrit à la main</span></div>
+    <div class="card"><b>2</b><span>replicas actifs</span></div>
+    <div class="card"><b>1</b><span>commande tapee</span></div>
+    <div class="card"><b>0</b><span>YAML ecrit a la main</span></div>
   </div>
-
-  <footer>namespace&nbsp;: project-alice-demo</footer>
+  <footer>namespace : project-alice-demo</footer>
 </main>
 </body>
 </html>
+EOF
 ```
 
-Contenu de `Dockerfile` :
+**Créer le `Dockerfile` :**
 
-```dockerfile
+```bash
+cat > ~/landing/Dockerfile << 'EOF'
 FROM nginx:alpine
 COPY index.html /usr/share/nginx/html/index.html
+EOF
 ```
+
+**Vérifier que les deux fichiers sont bien créés :**
+
+```bash
+ls -lh ~/landing/
+```
+
+Résultat attendu : `Dockerfile` et `index.html` présents.
 
 ### 1.3 Construire et pousser les deux versions
 
@@ -99,12 +113,14 @@ sudo docker build -t localhost:5000/landing:v1 .
 sudo docker push localhost:5000/landing:v1
 
 # Version 2 : on change le titre pour que le public voie la différence
-sed -i 's/<h1>.*<\/h1>/<h1>Version 2, déployée en 8 secondes.<\/h1>/' index.html
+sed -i 's|<h1>Votre application, en une commande.</h1>|<h1>Version 2, deployee en 8 secondes.</h1>|' ~/landing/index.html
 sudo docker build -t localhost:5000/landing:v2 .
 sudo docker push localhost:5000/landing:v2
 
+# Restaurer index.html en version 1 pour la prochaine fois
+sed -i 's|<h1>Version 2, deployee en 8 secondes.</h1>|<h1>Votre application, en une commande.</h1>|' ~/landing/index.html
+
 # Vérification : les deux tags doivent apparaître
-curl -s http://localhost:5000/v2/_catalog
 curl -s http://localhost:5000/v2/landing/tags/list
 ```
 
