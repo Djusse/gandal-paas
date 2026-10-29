@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GANDAL PaaS</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+       background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+       color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center}
+  main{max-width:720px;padding:2rem;text-align:center}
+  h1{font-size:3rem;letter-spacing:-.03em;margin-bottom:.5rem}
+  .tag{display:inline-block;padding:.35rem .9rem;border-radius:999px;
+       background:rgba(255,255,255,.12);font-size:.85rem;margin-bottom:1.5rem}
+  p{font-size:1.1rem;line-height:1.7;opacity:.9}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+        gap:1rem;margin-top:2.5rem}
+  .card{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+        border-radius:12px;padding:1rem}
+  .card b{display:block;font-size:1.6rem}
+  .card span{font-size:.8rem;opacity:.7}
+  footer{margin-top:2.5rem;font-size:.8rem;opacity:.55}
+</style>
+</head>
+<body>
+<main>
+  <span class="tag">Déployé par GANDAL PaaS</span>
+  <h1>Votre application, en une commande.</h1>
+  <p>Cette page tourne dans un conteneur nginx, sur un pod Kubernetes,
+     créé automatiquement dans un namespace isolé — avec ses quotas,
+     sa NetworkPolicy et son nom DNS.</p>
+
+  <div class="grid">
+    <div class="card"><b>2</b><span>réplicas actifs</span></div>
+    <div class="card"><b>1</b><span>commande tapée</span></div>
+    <div class="card"><b>0</b><span>YAML écrit à la main</span></div>
+  </div>
+
+  <footer>namespace&nbsp;: project-alice-demo</footer>
+</main>
+</body>
+</html>
