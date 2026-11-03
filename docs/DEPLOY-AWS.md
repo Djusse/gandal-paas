@@ -23,37 +23,66 @@ Durée : ~25 min (provisionnement + installation + tests).
 ## 1. Préparer la clé et provisionner (CloudShell)
 
 ```bash
-# Sur votre PC
+# Sur votre PC : créer la clé (si ce n'est pas déjà fait)
 ssh-keygen -t ed25519 -f ~/.ssh/gandal -C "gandal-paas"
-cat ~/.ssh/gandal.pub          # à copier
+cat ~/.ssh/gandal.pub          # copier le contenu
+```
 
-# Dans AWS CloudShell, à la racine du dépôt cloné
+Dans AWS CloudShell :
+
+```bash
+# Récupérer le dépôt sur la branche de fusion
+git clone -b integration https://github.com/Djusse/gandal-paas.git
+cd gandal-paas
+
+# CloudShell crée sa propre clé : on réutilise la pubkey du PC, importée
+# par le script. Si vous n'avez pas de clé sur votre PC, CloudShell a déjà
+# généré ~/gandal et ~/gandal.pub : utilisez ~/gandal.pub à la place.
 ./infra/aws/provision-aws.sh up ~/.ssh/gandal.pub <IP_DE_VOTRE_PC>
 ```
 
 Noter l'**Elastic IP** affichée. La région par défaut est `eu-west-3` (R7).
 
-> Si vous n'avez pas encore le dépôt dans CloudShell :
-> `git clone https://github.com/Djusse/gandal-paas && cd gandal-paas`
+> `provision-aws.sh` importe la clé publique sous le nom `gandal-paas` et
+> crée l'instance. La clé privée correspondante reste sur votre PC.
+> L'IP passée en 3e argument est celle qui pourra se connecter en SSH et à
+> l'API Kubernetes (ports 22 et 6443) ; 80/443 sont ouverts à tous.
 
 ---
 
 ## 2. Copier le dépôt et installer le socle
 
-```bash
-# Depuis votre PC
-scp -i ~/.ssh/gandal -r gandal-paas ubuntu@<IP>:/home/ubuntu/
+Le plus simple est de cloner directement sur la VM :
 
-# Se connecter
+```bash
+# Attendre que l'instance soit prête (1 à 2 min après le provisioning)
 ssh -i ~/.ssh/gandal ubuntu@<IP>
 
-# Sur la VM : Docker, K3s, registry privé
-cd ~/gandal-paas
+git clone -b integration https://github.com/Djusse/gandal-paas.git
+cd gandal-paas
+
+# Docker, K3s, registry privé — 3 à 5 min
 ./infra/k3s/install.sh <IP>
 ```
 
-`install.sh` installe Docker, K3s, le registry `localhost:5000` et attend que
-l'API Kubernetes réponde. Il ajoute aussi `KUBECONFIG` à `~/.bashrc`.
+Si le dépôt est privé ou si vous préférez copier l'arbre local :
+
+```bash
+# Depuis votre PC
+rsync -av -e "ssh -i ~/.ssh/gandal" \
+  --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
+  gandal-paas/ ubuntu@<IP>:/home/ubuntu/gandal-paas/
+```
+
+`install.sh` installe Docker, K3s, le registry `localhost:5000`, attend que
+l'API Kubernetes réponde, puis vérifie que le registry répond sur le port 5000.
+Il ajoute `KUBECONFIG` à `~/.bashrc` et `~/.profile`.
+
+```bash
+# Contrôle avant de continuer
+kubectl get nodes            # 1 nœud Ready
+curl -s localhost:5000/v2/   # {} attendu
+```
 
 ---
 
@@ -92,8 +121,15 @@ kubectl -n gandal-system get pods
 
 ```bash
 cd ~/gandal-paas
-export BACKEND_URL="http://api.$(curl -s https://checkip.amazonaws.com).sslip.io"
-source .secrets/cluster.env
+
+# Le domaine dérive de l'IP publique de l'instance, pas de celle de CloudShell.
+IP=$(curl -s https://checkip.amazonaws.com)
+export BACKEND_URL="http://api.${IP}.sslip.io"
+export GANDAL_BASE_DOMAIN="${IP}.sslip.io"
+source .secrets/cluster.env      # ORCHESTRATOR_TOKEN, INTERNAL_TOKEN, WEBHOOK_SECRET
+
+# Vérifier que l'API répond avant le test
+curl -s "$BACKEND_URL/health"
 
 ./deploy/e2e.sh
 ```
@@ -131,19 +167,31 @@ même `deployed` grâce à la boucle de réconciliation (D9).
 
 ```bash
 export KUBECONFIG=$HOME/.kube/config
-export GANDAL_BASE_DOMAIN="<IP>.sslip.io"
+export GANDAL_BASE_DOMAIN="${IP}.sslip.io"
+export PYTHONPATH="$PWD/orchestrator"
+source ~/gandal-venv/bin/activate        # fournit le client kubernetes
+
 ./orchestrator/validation.sh alice memoire my-api
 ```
 
-Le test 3 (isolation) ne peut plus être « ignoré » : si la sonde
-`localhost:5000/curl:latest` manque, il échoue explicitement (R3).
+Le script teste la CLI `orchestrator/gandal_deploy.py`, qui partage le même
+code que le service HTTP. Le test 3 (isolation) ne peut plus être « ignoré » :
+si la sonde `localhost:5000/curl:latest` manque, il échoue explicitement (R3).
+
+> `validation.sh` déploie `localhost:5000/my-api:v1` par défaut. Pour utiliser
+> l'image réellement publiée par l'installateur :
+>
+> ```bash
+> export GANDAL_TEST_IMAGE=localhost:5000/paas/demo:a1b2c3d4
+> ./orchestrator/validation.sh alice memoire my-api
+> ```
 
 ---
 
 ## 5. Utiliser l'API
 
 ```bash
-export API="http://api.<IP>.sslip.io"
+export API="http://api.${IP}.sslip.io"
 
 # Créer un projet
 curl -sS -X POST "$API/projects" \
@@ -172,8 +220,31 @@ Documentation interactive : `http://api.<IP>.sslip.io/docs`.
 | Pod non prêt | `kubectl -n gandal-system describe pod <pod>` |
 | Backend refuse un appel | `kubectl -n gandal-system logs deploy/backend --tail=50` |
 | Orchestrateur et K8s | `kubectl -n gandal-system logs deploy/orchestrator --tail=50` |
-| État d'un déploiement | `curl -H "X-Orchestrator-Token: $ORCHESTRATOR_TOKEN" http://localhost:8100/deployments/1` (depuis un pod) |
-| Registry | `curl http://localhost:5000/v2/_catalog` |
+| État d'un déploiement | `kubectl -n gandal-system exec deploy/orchestrator -- curl -s -H "X-Orchestrator-Token: $ORCHESTRATOR_TOKEN" localhost:8100/deployments/1` |
+| Attente des pods | `kubectl get pods -n proj-<projet> -w` |
+| Registry | `curl http://localhost:5000/v2/_catalog` et `curl http://localhost:5000/v2/paas/demo/tags/list` |
+| Droits de l'orchestrateur | `kubectl auth can-i create deployments --as=system:serviceaccount:gandal-system:orchestrator -n proj-demo` |
+
+Vérifications rapides, dans l'ordre :
+
+```bash
+# 1. Les trois pods tournent
+kubectl -n gandal-system get pods
+
+# 2. L'API répond
+curl -s "http://api.${IP}.sslip.io/health"
+
+# 3. L'orchestrateur voit Kubernetes
+kubectl -n gandal-system exec deploy/orchestrator -- \
+  curl -s localhost:8100/health
+
+# 4. Les jetons concordent (même valeur des deux côtés)
+kubectl -n gandal-system exec deploy/backend -- printenv ORCHESTRATOR_TOKEN
+kubectl -n gandal-system exec deploy/orchestrator -- printenv ORCHESTRATOR_TOKEN
+
+# 5. L'image est bien dans le registry
+curl -s localhost:5000/v2/paas/demo/tags/list
+```
 
 Erreurs attendues et leur sens :
 

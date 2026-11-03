@@ -154,7 +154,7 @@ if ! curl -fsS http://localhost:5000/v2/ >/dev/null 2>&1; then
 fi
 echo "    registry OK sur http://localhost:5000"
 
-echo "==> Environnement Python pour le script PaaS"
+echo "==> Environnement Python pour la CLI PaaS"
 python3 -m venv "$HOME/gandal-venv"
 "$HOME/gandal-venv/bin/pip" install --quiet kubernetes
 
@@ -162,4 +162,5 @@ echo
 echo "Installation terminee."
 echo "Reconnectez-vous (ou 'newgrp docker') pour utiliser docker sans sudo."
 echo "Test registry : curl http://localhost:5000/v2/_catalog"
-echo "Script PaaS   : source ~/gandal-venv/bin/activate && python gandal_deploy.py --help"
+echo "CLI PaaS      : source ~/gandal-venv/bin/activate && python <depot>/orchestrator/gandal_deploy.py --help"
+echo "Plateforme    : ./infra/k3s/install-gandal.sh <IP_PUBLIQUE>  (backend + orchestrateur)"

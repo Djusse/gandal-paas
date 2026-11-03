@@ -92,7 +92,8 @@ ok "orchestrateur"
 
 # Image applicative utilisée par les déploiements de démonstration.
 # Elle est publiée sous le tag du pipeline simulé : les 8 premiers caractères
-# du SHA d'exemple `a1b2c3d4e5f6...` (voir deploy/e2e.sh).
+# du SHA d'exemple `a1b2c3d4e5f6...` (voir deploy/e2e.sh, qui utilise le même
+# SHA par défaut).
 DEMO_TAG="${GANDAL_DEMO_TAG:-a1b2c3d4}"
 $DOCKER build -q -t "$REGISTRY/paas/demo:$DEMO_TAG" "$REPO_ROOT/demo" >/dev/null
 $DOCKER push -q "$REGISTRY/paas/demo:$DEMO_TAG" >/dev/null

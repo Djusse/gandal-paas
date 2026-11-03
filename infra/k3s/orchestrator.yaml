@@ -45,13 +45,20 @@ subjects:
     name: orchestrator
     namespace: gandal-system
 ---
-# Rôle applicatif, destiné à être lié dans chaque namespace de projet.
+# Droits applicatifs dans les namespaces de projet.
+#
+# Variante retenue : ClusterRole unique (repli documenté du §3.2).
+#
+# La variante « RoleBinding créé par namespace par le code » a été écartée :
+# le ServiceAccount ne peut pas s'auto-accorder des droits (interdiction
+# d'escalade de privilèges de Kubernetes). Un ClusterRole lié par
+# ClusterRoleBinding est donc la seule option réalisable sans opérateur
+# externe. Les garde-fous R12 restent appliqués dans le code
+# (namespace réservé, namespace ≠ proj-{project}, label gandal.io/managed).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: gandal-project-app
-  labels:
-    gandal.io/role: project-app
+  name: gandal-orchestrator-app
 rules:
   - apiGroups: [""]
     resources: ["resourcequotas", "limitranges", "services"]
@@ -63,27 +70,14 @@ rules:
     resources: ["ingresses", "networkpolicies"]
     verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
 ---
-# Autorise l'orchestrateur à créer un RoleBinding pour gandal-project-app.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRoleBinding
 metadata:
-  name: gandal-orchestrator-bind
-  namespace: gandal-system
-rules:
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["rolebindings"]
-    verbs: ["create", "patch", "get", "list"]
-    resourceNames: []
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: gandal-orchestrator-bind
-  namespace: gandal-system
+  name: gandal-orchestrator-app
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: gandal-orchestrator-bind
+  kind: ClusterRole
+  name: gandal-orchestrator-app
 subjects:
   - kind: ServiceAccount
     name: orchestrator
