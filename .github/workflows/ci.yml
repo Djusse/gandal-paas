@@ -135,17 +135,41 @@ jobs:
           import sys
           import yaml
 
+          # L'Ingress du backend contient un hôte factice : il est exclu du
+          # contrôle de domaine mais doit rester un YAML valide.
           errors = []
+          expected_ns = {"gandal-system"}
           for path in glob.glob("infra/k3s/*.yaml") + glob.glob("deploy/*.yml"):
               try:
-                  list(yaml.safe_load_all(open(path, encoding="utf-8")))
+                  docs = [d for d in yaml.safe_load_all(open(path, encoding="utf-8")) if d]
               except Exception as exc:
                   errors.append(f"{path}: {exc}")
+                  continue
+
+              for doc in docs:
+                  meta = doc.get("metadata") or {}
+                  namespace = meta.get("namespace")
+                  if namespace and namespace not in expected_ns and namespace.startswith("gandal"):
+                      errors.append(f"{path}: namespace inattendu {namespace}")
+                  if doc.get("kind") == "Deployment":
+                      if not doc.get("spec", {}).get("selector", {}).get("matchLabels"):
+                          errors.append(f"{path}: Deployment {meta.get('name')} sans selector")
+
           if errors:
               print("\n".join(errors))
               sys.exit(1)
           print("manifestes valides")
           PY
+
+      - name: Aucun secret en clair dans les manifestes
+        run: |
+          if grep -rn --include='*.yaml' --include='*.yml' \
+               -E 'change-me-long-random' infra/ \
+             | grep -v 'orchestrator.yaml'; then
+            echo "secret de démonstration hors du manifeste prévu" >&2
+            exit 1
+          fi
+          echo "aucun secret en clair"
 
   docker:
     name: Images Docker

@@ -16,8 +16,8 @@ async def on_build_success(project_id: int, sha: str):
             log.warning("Project id %s not found in on_build_success", project_id)
             return
 
-        tags = await get_gitlab().list_images(p.gitlab_project_id)
         wanted = sha[:8]    # matches CI_COMMIT_SHORT_SHA used by the template
+        tags = await get_gitlab().list_images(p.gitlab_project_id, sha)
         t = next((x for x in tags if x['tag'] == wanted), None)
         if not t:
             p.status, p.error = 'failed', f'image tag {wanted} not found in registry'

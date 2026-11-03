@@ -1,7 +1,12 @@
 # GANDAL PaaS — Simulation sur AWS
 
+> **Document infra historique.** Depuis la fusion, le parcours complet
+> (backend + orchestrateur + PostgreSQL dans K3s) est décrit dans
+> [`DEPLOY-AWS.md`](DEPLOY-AWS.md). Ce fichier reste la référence pour le
+> socle seul : Docker, K3s et registry.
+
 Prototype du socle PaaS GANDAL : une VM unique, K3s, un registry privé et un
-script Python qui transforme « un utilisateur + une image » en URL accessible.
+service qui transforme « un utilisateur + une image » en URL accessible.
 
 L'objectif est de valider la mécanique Kubernetes (Namespaces, quotas,
 NetworkPolicies, Ingress, labels de propriété) sans dépendre de l'infrastructure

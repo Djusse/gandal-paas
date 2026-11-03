@@ -28,6 +28,9 @@ WEBHOOK_SECRET="${WEBHOOK_SECRET:-dev-webhook-secret}"
 RESILIENCE="${RESILIENCE:-0}"
 UP="${UP:-0}"
 SKIP_HTTP="${SKIP_HTTP:-0}"
+# Le tag de l'image produite est SHA[:8]. Le défaut correspond au tag publié
+# par infra/k3s/install-gandal.sh dans le registry du cluster.
+SHA="${SHA:-a1b2c3d4e5f6}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
@@ -75,8 +78,6 @@ ok "projet $PROJECT_ID (GitLab $GITLAB_ID), namespace proj-$PROJECT"
 
 # --------------------------------------------------------------- webhook
 say "Webhook pipeline success"
-# GitLabFake attend un tag correspondant aux 8 premiers caractères du SHA.
-SHA="a1b2c3d4$(printf '%04d' $((RANDOM % 10000)))"
 PIPELINE_ID=$(( (RANDOM * 32768 + RANDOM) % 900000 + 1000 ))
 
 curl -fsS -X POST "$BACKEND_URL/webhooks/gitlab" \

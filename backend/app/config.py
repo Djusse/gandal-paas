@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     ci_template: str = "templates/build.yml@paas/ci-templates"
     webhook_secret: str = "change-me-long-random"
     webhook_public_url: str = "http://localhost:8000"
+
+    # GitLab de simulation : permet de pointer vers le registry réel du cluster
+    # (plan Phase 4). Par défaut, comportement inchangé (`fake-registry/paas`).
+    gitlab_fake_registry: str = "fake-registry/paas"
+    gitlab_fake_repository: str = ""   # si défini, utilisé pour tous les projets
+    gitlab_fake_tag: str = "a1b2c3d4"
+    gitlab_fake_digest: str = "sha256:" + "0" * 64  # vide = pas de digest
+
     orchestrator_url: str = ""
     orchestrator_token: str = "change-me-long-random"  # envoyé à l'orchestrateur
     orchestrator_timeout: float = 15.0

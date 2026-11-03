@@ -25,6 +25,10 @@ kubeconfig
 .kube/
 *.db
 *.sqlite3
+# Secrets générés par infra/k3s/install-gandal.sh
+.secrets/
+# Base temporaire du script de vérification locale
+.verify-e2e.db
 
 # ---------------------------------------------------------------- Python
 __pycache__/

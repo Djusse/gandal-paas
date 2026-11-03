@@ -33,6 +33,10 @@ APP_LABEL = "gandal.io/app"
 
 DEPLOYMENT_ID_LABEL = "gandal.io/deployment-id"
 DEPLOYMENT_ID_ANNOTATION = "gandal.io/deployment-id"
+
+#: Namespaces autorisés à joindre une application déployée : Traefik (K3s) et
+#: l'orchestrateur (rappels, purge). Toute autre source est bloquée.
+INGRESS_NAMESPACES = ("kube-system", "gandal-system")
 REPORTED_STATUS_ANNOTATION = "gandal.io/reported-status"
 IMAGE_ANNOTATION = "gandal.io/image"
 URL_ANNOTATION = "gandal.io/url"
@@ -280,36 +284,29 @@ class KubernetesBackend:
         )
 
     def ensure_network_policy(self, spec: DeploySpec) -> None:
+        """Isolation : même namespace + Traefik + orchestrateur, rien d'autre."""
+        peers = [{"from": [{"podSelector": {}}]}]
+        for namespace in INGRESS_NAMESPACES:
+            peers.append(
+                {
+                    "from": [
+                        {
+                            "namespaceSelector": {
+                                "matchLabels": {
+                                    "kubernetes.io/metadata.name": namespace
+                                }
+                            }
+                        }
+                    ]
+                }
+            )
+
         body = {
             "metadata": {"name": NETWORK_POLICY_NAME, "labels": spec.labels},
             "spec": {
                 "podSelector": {},
                 "policyTypes": ["Ingress"],
-                "ingress": [
-                    {"from": [{"podSelector": {}}]},
-                    {
-                        "from": [
-                            {
-                                "namespaceSelector": {
-                                    "matchLabels": {
-                                        "kubernetes.io/metadata.name": "kube-system"
-                                    }
-                                }
-                            }
-                        ]
-                    },
-                    {
-                        "from": [
-                            {
-                                "namespaceSelector": {
-                                    "matchLabels": {
-                                        "kubernetes.io/metadata.name": "gandal-system"
-                                    }
-                                }
-                            }
-                        ]
-                    },
-                ],
+                "ingress": peers,
             },
         }
         ns = spec.namespace

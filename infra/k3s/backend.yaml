@@ -1,0 +1,106 @@
+# Configuration du backend GANDAL PaaS (déploiement K3s sur AWS)
+#
+# Appliqué par infra/k3s/install-gandal.sh, qui crée d'abord les Secrets :
+#   - backend-secrets     : WEBHOOK_SECRET, INTERNAL_TOKEN, ORCHESTRATOR_TOKEN
+#   - backend-db-secret   : POSTGRES_PASSWORD, DATABASE_URL
+#
+# L'Ingress public est dans backend-ingress.yaml : son hôte dépend de l'IP,
+# il est généré à l'installation.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: gandal-system
+data:
+  GITLAB_MODE: fake
+  ORCHESTRATOR_MODE: real
+  AUTH_MODE: dev
+  # Registry du nœud K3s : les images produites par GitLabFake y sont publiées
+  # par install-gandal.sh (paas/demo:v1), ce qui rend le e2e réel.
+  GITLAB_FAKE_REGISTRY: localhost:5000/paas
+  GITLAB_FAKE_REPOSITORY: localhost:5000/paas/demo
+  # Vide : le tag suit la convention du pipeline (8 premiers caractères du SHA).
+  # install-gandal.sh publie l'image de démonstration sous le tag par défaut
+  # `a1b2c3d4`, qui correspond au SHA d'exemple utilisé par deploy/e2e.sh.
+  GITLAB_FAKE_TAG: ""
+  # Digest vide : on déploie par tag, le digest factice n'existe pas dans le
+  # registry du cluster.
+  GITLAB_FAKE_DIGEST: ""
+  ORCHESTRATOR_URL: http://orchestrator.gandal-system.svc.cluster.local:8100
+  WEBHOOK_PUBLIC_URL: http://backend.gandal-system.svc.cluster.local:8000
+  DEFAULT_REPLICAS: "2"
+  RECOVERY_ENABLED: "true"
+  RECOVERY_INTERVAL: "60"
+  REQUESTED_TIMEOUT: "120"
+  DEPLOYING_TIMEOUT: "300"
+  CORS_ORIGINS: "*"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: gandal-system
+  labels:
+    app.kubernetes.io/name: gandal-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gandal-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gandal-backend
+    spec:
+      containers:
+        - name: backend
+          image: localhost:5000/gandal/backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secrets
+          # DATABASE_URL (mot de passe inclus) vient de backend-db-secret.
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-db-secret
+                  key: DATABASE_URL
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: gandal-system
+spec:
+  selector:
+    app.kubernetes.io/name: gandal-backend
+  ports:
+    - port: 8000
+      targetPort: 8000

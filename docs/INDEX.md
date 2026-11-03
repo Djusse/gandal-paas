@@ -32,6 +32,7 @@ réellement présents dans `docs/` et renvoie vers les zones du monorepo.
 | [PRESENTATION.md](PRESENTATION.md) | Support de présentation du projet |
 | [DEMO_LANDING_PAGE.md](DEMO_LANDING_PAGE.md) | Scénario de démonstration (landing page) |
 | [MIGRATION.md](MIGRATION.md) | Procédure de bascule, étiquetage et archivage |
+| [DEPLOY-AWS.md](DEPLOY-AWS.md) | Déploiement complet sur AWS : CloudShell → K3s → e2e |
 | [TESTING.md](TESTING.md) | Comment tester soi-même (local, sans cluster, avec cluster) |
 | [INDEX.md](INDEX.md) | Ce fichier |
 

@@ -1,0 +1,87 @@
+# PostgreSQL pour le backend, dans le cluster (simulation).
+#
+# Volume `local-path` (fourni par K3s) : les données survivent au redémarrage
+# du pod, pas à la destruction du nœud. Suffisant pour la démonstration.
+#
+# Le Secret est créé par install.sh (mot de passe aléatoire) :
+#   kubectl -n gandal-system create secret generic backend-db-secret \
+#     --from-literal=POSTGRES_PASSWORD=... --from-literal=DATABASE_URL=...
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-db-pvc
+  namespace: gandal-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-db
+  namespace: gandal-system
+  labels:
+    app.kubernetes.io/name: gandal-backend-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gandal-backend-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gandal-backend-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: paas
+            - name: POSTGRES_DB
+              value: paas
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: backend-db-secret
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "paas", "-d", "paas"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: backend-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-db
+  namespace: gandal-system
+spec:
+  selector:
+    app.kubernetes.io/name: gandal-backend-db
+  ports:
+    - port: 5432
+      targetPort: 5432
