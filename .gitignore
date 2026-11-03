@@ -1,4 +1,4 @@
-# LaTeX
+# ---------------------------------------------------------------- LaTeX
 *.aux
 *.log
 *.out
@@ -7,24 +7,37 @@
 *.fls
 *.fdb_latexmk
 *.xdv
+*.pdf
 
-# Build
+# ----------------------------------------------------------------- Build
 /tmp/
 build/
+dist/
+*.egg-info/
 
-# Secrets et accès
+# --------------------------------------------------- Secrets et accès
 *.pem
 *.key
 .env
+.env.*
+!.env.example
 kubeconfig
 .kube/
+*.db
+*.sqlite3
 
-# Python
+# ---------------------------------------------------------------- Python
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 gandal-venv/
 .venv/
+venv/
 
-# Divers
+# ------------------------------------------------------------ Divers
 .DS_Store
 *.swp
+.idea/
+.vscode/

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gandal.local/contracts/deployment-request.schema.json",
+  "title": "Requête de déploiement (backend -> orchestrateur)",
+  "description": "Corps de POST /deployments. Le backend est propriétaire du namespace et de l'URL (D3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "deployment_id",
+    "project",
+    "namespace",
+    "image",
+    "port"
+  ],
+  "properties": {
+    "deployment_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Identifiant du déploiement côté backend ; sert de clé d'idempotence."
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,28}[a-z0-9]$",
+      "description": "Nom du projet, globalement unique."
+    },
+    "owner": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "Propriétaire (nom GitLab). Normalisé en label par l'orchestrateur."
+    },
+    "namespace": {
+      "type": "string",
+      "pattern": "^proj-[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+      "maxLength": 63,
+      "description": "Doit valoir proj-{project} et ne pas être un namespace réservé."
+    },
+    "image": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Référence du dépôt d'image (sans tag ni digest)."
+    },
+    "tag": {
+      "type": ["string", "null"],
+      "description": "Tag de l'image ; ignoré si un digest est fourni."
+    },
+    "digest": {
+      "type": ["string", "null"],
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Digest OCI, préféré au tag : il est immuable."
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "replicas": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Défaut : 2 (D8), plafonné par le quota de pods (4)."
+    }
+  }
+}

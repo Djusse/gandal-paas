@@ -1,0 +1,7 @@
+# Dépendances d'exécution de l'orchestrateur (UTF-8 / LF).
+fastapi==0.159.1
+uvicorn==0.54.0
+httpx==0.28.1
+kubernetes==34.1.0
+PyYAML==6.0.3
+pydantic==2.14.1

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gandal.local/contracts/deployment-status.schema.json",
+  "title": "Rappel de statut (orchestrateur -> backend)",
+  "description": "Corps de POST /internal/deployments/{id}/status, protégé par X-Internal-Token.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["deploying", "deployed", "failed"],
+      "description": "Le backend n'accepte jamais de régression depuis deployed ou failed."
+    },
+    "url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "URL publique, connue de l'orchestrateur seul."
+    },
+    "message": {
+      "type": ["string", "null"],
+      "description": "Diagnostic destiné à l'utilisateur (ex. CrashLoopBackOff)."
+    }
+  }
+}

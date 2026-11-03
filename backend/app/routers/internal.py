@@ -5,6 +5,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import Deployment, Project
 from app.schemas import DeploymentStatusCallback
+from app.services.deployment_service import is_monotonic
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -22,6 +23,11 @@ def update_deployment_status(
     deployment = db.get(Deployment, deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
+
+    # R1 : le callback est monotone. Un `deploying` tardif n'écrase jamais un
+    # `deployed` ou un `failed` déjà enregistré.
+    if not is_monotonic(deployment.status, payload.status):
+        return {"ok": True, "ignored": True, "status": deployment.status}
 
     deployment.status = payload.status
     if payload.url:

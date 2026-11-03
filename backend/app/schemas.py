@@ -1,9 +1,16 @@
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 
+# Un nom de projet est un label DNS-1123 : minuscules, chiffres et tirets,
+# commençant par une lettre, sans tiret final (§2.1 du plan).
+PROJECT_NAME_PATTERN = r'^[a-z][a-z0-9-]{1,28}[a-z0-9]$'
+
 
 class ProjectCreate(BaseModel):
-    name: str = Field(pattern=r'^[a-z][a-z0-9-]{2,29}$', description="Project slug (lowercase, 3-30 chars, starts with letter)")
+    name: str = Field(
+        pattern=PROJECT_NAME_PATTERN,
+        description="Project slug (lowercase, 3-30 chars, no trailing hyphen)",
+    )
     app_port: int = Field(default=8080, ge=1, le=65535, description="Port the app listens on in container")
 
 
@@ -65,3 +72,8 @@ class DeploymentStatusCallback(BaseModel):
 
 class ManualDeployRequest(BaseModel):
     image_id: int | None = Field(default=None, description="Optional specific image ID to deploy. Defaults to latest image.")
+
+
+class DeleteResult(BaseModel):
+    deleted: bool = True
+    message: str = ""

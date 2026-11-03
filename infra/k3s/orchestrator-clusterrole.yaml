@@ -1,0 +1,42 @@
+# Repli documenté (plan §3.2) : si les droits par namespace s'avèrent trop
+# lourds à mettre en place sur K3s, l'orchestrateur reçoit un ClusterRole
+# unique sur les ressources applicatives.
+#
+# Ce repli ÉLARGIT les permissions : les garde-fous R12 restent donc
+# indispensables et sont appliqués dans le code (`gandal/names.py`,
+# `gandal/k8s.py`) :
+#   - namespace réservé refusé ;
+#   - namespace différent de proj-{project} refusé ;
+#   - suppression refusée sans le label gandal.io/managed=true.
+#
+# À appliquer à la place du Role `gandal-orchestrator-bind` de
+# `orchestrator.yaml`, puis à lier au ServiceAccount :
+#   kubectl apply -f infra/k3s/orchestrator-clusterrole.yaml
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gandal-orchestrator-app
+rules:
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges", "services"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gandal-orchestrator-app
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gandal-orchestrator-app
+subjects:
+  - kind: ServiceAccount
+    name: orchestrator
+    namespace: gandal-system

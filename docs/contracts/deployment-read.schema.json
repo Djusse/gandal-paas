@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gandal.local/contracts/deployment-read.schema.json",
+  "title": "État d'un déploiement (GET /deployments/{id})",
+  "description": "Lu dans Kubernetes ; sert de repli au backend quand un rappel s'est perdu.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["deployment_ref", "status"],
+  "properties": {
+    "deployment_ref": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["deploying", "deployed", "failed"]
+    },
+    "url": { "type": ["string", "null"], "format": "uri" },
+    "message": { "type": "string" }
+  }
+}

@@ -1,207 +1,150 @@
-# GANDAL PaaS — Simulation sur AWS
+# GANDAL PaaS
 
-Prototype du socle PaaS GANDAL : une VM unique, K3s, un registry privé et un
-script Python qui transforme « un utilisateur + une image » en URL accessible.
+Plateforme-as-a-Service du projet GANDAL : une API qui transforme « un dépôt Git »
+en application accessible par URL, sur un cluster K3s.
 
-L'objectif est de valider la mécanique Kubernetes (Namespaces, quotas,
-NetworkPolicies, Ingress, labels de propriété) sans dépendre de l'infrastructure
-définitive. Tout est ensuite rejouable sur XCP-ng : seules l'IP, le domaine et
-les éléments listés en Phase 9 du document de procédure changent.
+Ce dépôt est le **monorepo** issu de la fusion de :
 
-## Fichiers
+- `9ball9999/paas` — le **plan de contrôle** (API FastAPI, base de données, webhooks GitLab) ;
+- `Djusse/gandal-paas` — le **plan d'exécution** (K3s, registry privé, création des ressources Kubernetes).
 
-| Fichier | Rôle |
-|---|---|
-| `install.sh` | Installe Docker, K3s et le registry privé. Autonome et rejouable. |
-| `registry.yaml` | Manifeste du registry (déjà inclus dans `install.sh`). |
-| `gandal_deploy.py` | Script PaaS : `deploy`, `list`, `status`, `delete`. |
-| `simulation_v3.tex` | Procédure d'implémentation (phases 1 à 9). |
-| `explication_v3.tex` | Cadrage : périmètre, état final, 9 tests de validation. |
-| `tests/validation.sh` | Exécute automatiquement les 9 tests et affiche un bilan. |
+Le plan de fusion détaillé, les décisions (D1–D9) et les risques sont dans
+[`PLAN-FUSION-V2.md`](docs/PLAN-FUSION-V2.md).
+
+---
+
+## Architecture
+
+```text
+Étudiant ─ POST /projects ──▶ backend ──▶ GitLab (dépôt + webhook)
+   git push ──▶ GitLab CI (Kaniko) ──▶ image dans le registry
+GitLab ─ webhook pipeline ──▶ backend ── POST /deployments ──▶ ORCHESTRATEUR ──▶ K3s
+backend ◀── POST /internal/deployments/{id}/status (X-Internal-Token) ── ORCHESTRATEUR
+                                                       statut « deployed » + URL
+```
+
+| Composant | Rôle | Emplacement |
+|---|---|---|
+| **backend** | API REST : projets, images, déploiements, webhooks, callbacks internes | [`backend/`](backend/) |
+| **orchestrateur** | Traduit une demande de déploiement en ressources Kubernetes et rappelle le backend | [`orchestrator/`](orchestrator/) |
+| **infra** | Installation K3s/registry, provisionnement AWS, RBAC de l'orchestrateur | [`infra/`](infra/) |
+| **deploy** | Environnement d'intégration (PostgreSQL + backend + orchestrateur) et test de bout en bout | [`deploy/`](deploy/) |
+| **docs** | Architecture, rapports, diagrammes, contrats, documents LaTeX | [`docs/`](docs/) |
+| **demo** | Image de démonstration (`landing`) | [`demo/`](demo/) |
+
+Conventions (décision D3) :
+
+- namespace Kubernetes : `proj-{nom}` (calculé par le backend, jamais par l'orchestrateur) ;
+- URL publique : `{nom}.{GANDAL_BASE_DOMAIN}` (`<IP>.sslip.io` sur AWS) ;
+- labels : `gandal.io/owner`, `gandal.io/project`, `gandal.io/app`, `gandal.io/managed` ;
+- noms de projet **globalement uniques**, minuscules, sans tiret final
+  (`^[a-z][a-z0-9-]{1,28}[a-z0-9]$`) ;
+- réplicas par défaut : **2** (D8), quota de 4 pods par projet.
+
+---
+
+## Démarrage rapide — développement local
+
+```bash
+# 1. Backend + PostgreSQL
+cd deploy && docker compose up -d --build
+curl -s http://localhost:8000/health
+
+# 2. Tests
+cd backend && pip install -r requirements-dev.txt && pytest -q
+cd orchestrator && pip install -r requirements-dev.txt && pytest -q
+```
+
+Le backend démarre par défaut avec `GITLAB_MODE=fake` et `ORCHESTRATOR_MODE=mock` :
+aucun GitLab ni cluster n'est requis. Pour brancher le vrai orchestrateur, voir
+[`deploy/README.md`](deploy/README.md).
+
+---
+
+## Déploiement sur Kubernetes (simulation AWS)
+
+```bash
+# Création de l'infrastructure AWS (CloudShell)
+infra/aws/provision-aws.sh up ~/.ssh/gandal.pub
+
+# Sur la VM : Docker, K3s et registry privé
+infra/k3s/install.sh <IP_PUBLIQUE>
+
+# Orchestrateur dans le cluster (ServiceAccount + RBAC + Service)
+kubectl apply -f infra/k3s/orchestrator.yaml
+
+# Démonstration et validation
+infra/aws/deploy-demo.sh prepare
+infra/aws/run-validation.sh <IP_PUBLIQUE>
+```
+
+Les 9 tests Kubernetes de `orchestrator/validation.sh` valident le déploiement
+automatisé, l'accès DNS, l'isolation réseau, la résilience, les quotas, les
+métriques, l'identification des pods, l'idempotence et le nettoyage.
+
+Détails : [`docs/README-infra.md`](docs/README-infra.md).
+
+---
+
+## Contrat backend ↔ orchestrateur
+
+`POST /deployments` (en-tête `X-Orchestrator-Token`) :
+
+```json
+{
+  "deployment_id": 42,
+  "project": "mon-app",
+  "owner": "alice",
+  "namespace": "proj-mon-app",
+  "image": "registry.example/paas/mon-app",
+  "tag": "a1b2c3d4",
+  "digest": "sha256:…",
+  "port": 8080,
+  "replicas": 2
+}
+```
+
+→ `202 {"deployment_ref": "orch-42"}`, une fois les ressources appliquées.
+
+`GET /deployments/42` → `{"status": "...", "url": "...", "message": "..."}`.
+Rappel : `POST {BACKEND_URL}/internal/deployments/42/status` avec `X-Internal-Token`.
+
+Schémas JSON versionnés : [`docs/contracts/`](docs/contracts/).
+
+---
+
+## Tests et qualité
+
+```bash
+# Backend
+cd backend && pytest -q && ruff check app tests
+
+# Orchestrateur
+cd orchestrator && pytest -q && ruff check gandal app tests
+
+# Scripts
+shellcheck infra/k3s/*.sh infra/aws/*.sh orchestrator/validation.sh deploy/*.sh
+
+# Bout en bout (cluster disponible)
+deploy/e2e.sh
+```
+
+La CI GitHub Actions (`.github/workflows/ci.yml`) exécute `pytest`, `ruff`,
+`shellcheck` et un contrôle qu'aucun ancien chemin ne subsiste.
+
+---
 
 ## Documentation
 
-```bash
-pdflatex simulation_v3.tex && pdflatex simulation_v3.tex
-pdflatex explication_v3.tex && pdflatex explication_v3.tex
-```
+- [`docs/INDEX.md`](docs/INDEX.md) — index complet.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — architecture Kubernetes.
+- [`docs/VALIDATION_REPORT.md`](docs/VALIDATION_REPORT.md) — rapport historique.
+- [`backend/README.md`](backend/README.md) — API.
+- [`orchestrator/README.md`](orchestrator/README.md) — orchestrateur.
 
-Deux passes sont nécessaires pour la table des matières.
+---
 
-## Phase 1 — Provisionner l'instance AWS
+## Licence
 
-### Types d'instance compatibles free tier
-
-| Type | vCPU | RAM | Verdict |
-|---|---|---|---|
-| `m7i-flex.large` | 2 | 8 Go | **Recommandé** — équivalent du `t3.large` de la doc |
-| `c7i-flex.large` | 2 | 4 Go | Acceptable, peu de marge ; baisser les quotas |
-| `t3.micro` | 2 | 1 Go | Trop juste pour K3s + registry + 2 réplicas |
-
-Le script utilise `m7i-flex.large` par défaut. Surcharge possible :
-
-```bash
-INSTANCE_TYPE=c7i-flex.large VOLUME_SIZE=30 ./provision-aws.sh up ~/gandal.pub
-```
-
-Si l'instance a moins de 6 Go de RAM, [`install.sh`](install.sh:26) ajoute
-automatiquement 2 Go de swap pour éviter les OOM-kill.
-
-En 4 Go, réduire aussi les quotas au déploiement :
-
-```bash
-export GANDAL_QUOTA_REQ_MEM=512Mi GANDAL_QUOTA_LIM_MEM=1Gi
-```
-
-### Option A : script automatique (CloudShell)
-
-Sur votre PC, créer une paire de clés :
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/gandal -C gandal-paas
-```
-
-Puis dans AWS CloudShell, coller le contenu de `scripts/provision-aws.sh`
-(dans l'éditeur CloudShell, ou par copier-coller si le dépôt n'est pas
-accessible) et :
-
-```bash
-chmod +x provision-aws.sh
-./provision-aws.sh up ~/.ssh/gandal.pub
-```
-
-Le script crée le VPC, le sous-réseau public, la passerelle Internet, la table
-de routage, le Security Group, la paire de clés, l'instance `t3.large` avec
-60 Go gp3 et l'Elastic IP, puis affiche l'IP publique. La clé publique doit être
-envoyée dans CloudShell (CloudShell n'a pas accès à votre `~/.ssh` local) :
-
-```bash
-# Dans CloudShell, creer la cle directement la-bas puis la rapatrier
-ssh-keygen -t ed25519 -f ~/gandal -N "" -C gandal-paas
-cat ~/gandal          # copier la cle PRIVEE dans ~/.ssh/gandal sur votre PC
-./provision-aws.sh up ~/gandal.pub
-```
-
-Suppression complète :
-
-```bash
-./provision-aws.sh down
-```
-
-### Option B : console AWS à la main
-
-| Élément | Valeur |
-|---|---|
-| AMI | Ubuntu 24.04 LTS |
-| Type | `t3.large` (2 vCPU, 8 Go) |
-| Disque racine | 60 Go gp3 |
-| IP | Elastic IP (obligatoire pour le DNS) |
-| VPC | `10.0.0.0/16` avec sous-réseau public |
-
-Security Group :
-
-| Port | Source | Usage |
-|---|---|---|
-| 22 | votre IP | SSH |
-| 80 | 0.0.0.0/0 | HTTP (Ingress Traefik) |
-| 443 | 0.0.0.0/0 | HTTPS (non utilisé en simulation, prévu) |
-| 6443 | votre IP | API Kubernetes, seulement pour piloter depuis le PC |
-
-Le port **5000 n'est pas ouvert** : le registry n'est pas exposé à Internet.
-Les images sont construites et poussées depuis la VM.
-
-> L'Elastic IP et le volume gp3 sont facturés même instance arrêtée.
-> Supprimer toutes les ressources après la démonstration.
-
-## Phase 2 — Installer le socle
-
-```bash
-scp install.sh ubuntu@<ELASTIC_IP>:~/
-ssh ubuntu@<ELASTIC_IP>
-chmod +x install.sh
-./install.sh <ELASTIC_IP>
-```
-
-Le script est rejouable : le relancer ne casse rien. Il vérifie lui-même que
-l'API Kubernetes répond et que le registry sert sur `localhost:5000`.
-
-Vérification :
-
-```bash
-kubectl get nodes          # Ready
-kubectl get pods -A        # traefik, coredns, metrics-server en Running
-curl http://localhost:5000/v2/_catalog
-```
-
-## Phase 3 — Publier une image de test
-
-Le groupe `docker` ne s'applique qu'après reconnexion : utiliser `sudo docker`
-ou `newgrp docker` dans la session courante.
-
-```bash
-sudo docker pull nginx:alpine
-sudo docker tag nginx:alpine localhost:5000/my-api:v1
-sudo docker push localhost:5000/my-api:v1
-
-# Sonde réseau pour le test d'isolation
-sudo docker pull curlimages/curl:latest
-sudo docker tag curlimages/curl:latest localhost:5000/curl:latest
-sudo docker push localhost:5000/curl:latest
-```
-
-## Phase 4-6 — Déployer une application
-
-```bash
-source ~/gandal-venv/bin/activate
-export GANDAL_BASE_DOMAIN="<ELASTIC_IP>.sslip.io"
-
-python gandal_deploy.py deploy alice memoire my-api localhost:5000/my-api:v1 80
-```
-
-Le script crée le namespace, le LimitRange, le ResourceQuota, la NetworkPolicy,
-le Deployment, le Service et l'Ingress, puis affiche l'URL.
-
-Nommage : `project-<user>-<projet>` pour le namespace,
-`<app>-<projet>-<user>.<domaine>` pour l'URL.
-
-## Phase 7-8 — Valider
-
-```bash
-./tests/validation.sh alice memoire my-api
-```
-
-Le script exécute les 9 tests de réussite et affiche un bilan. Il attend un
-environnement préparé (Phase 2 à 4) et `GANDAL_BASE_DOMAIN` défini.
-
-## Variables d'environnement
-
-| Variable | Défaut | Rôle |
-|---|---|---|
-| `GANDAL_BASE_DOMAIN` | `gandal.test` | Domaine de base des URL |
-| `GANDAL_INGRESS_CLASS` | `traefik` | Classe d'Ingress |
-| `GANDAL_REPLICAS` | `2` | Réplicas par défaut |
-| `GANDAL_QUOTA_REQ_CPU` | `1` | Quota : requests CPU |
-| `GANDAL_QUOTA_REQ_MEM` | `1Gi` | Quota : requests mémoire |
-| `GANDAL_QUOTA_LIM_CPU` | `2` | Quota : limits CPU |
-| `GANDAL_QUOTA_LIM_MEM` | `2Gi` | Quota : limits mémoire |
-| `GANDAL_QUOTA_PODS` | `4` | Quota : nombre de pods |
-
-## Passage à XCP-ng
-
-Ce qui ne change pas : `install.sh`, `registry.yaml`, la logique du script
-Python, les manifests générés, les labels, les quotas, les NetworkPolicies.
-
-Ce qui change :
-
-| Élément | AWS | GANDAL (XCP-ng) |
-|---|---|---|
-| Adresse d'entrée | Elastic IP | IP fournie par Système/Réseau |
-| Domaine | sslip.io ou `gandal.test` | Domaine GANDAL + wildcard Réseau |
-| TLS | absent | cert-manager ou certificats fournis |
-| Registry | HTTP sans authentification | TLS + authentification |
-| Pare-feu | Security Group | Règles Réseau/Sécurité |
-| Accès Internet sortant | libre | à vérifier, sinon installation hors ligne |
-| IP du certificat | `--tls-san` | ajouter l'IP dans `config.yaml` puis redémarrer K3s |
-
-Si le réseau est isolé : `docker save` / `docker load` pour les images et
-installation hors ligne de K3s.
+Voir [`LICENSE`](LICENSE). Les contributions sont décrites dans
+[`CONTRIBUTING.md`](CONTRIBUTING.md).

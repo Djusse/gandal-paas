@@ -1,0 +1,4 @@
+# Dépendances de développement et de test (UTF-8 / LF).
+-r requirements.txt
+pytest==9.1.1
+ruff==0.14.3

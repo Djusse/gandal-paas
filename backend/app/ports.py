@@ -10,3 +10,5 @@ class GitLabPort(Protocol):
 
 class OrchestratorPort(Protocol):
     async def deploy(self, request: dict) -> dict: ...          # {'deployment_ref': str}
+    async def get_deployment(self, deployment_id: int) -> dict: ...  # {'status', 'url', 'message'}
+    async def delete_project(self, namespace: str) -> None: ...

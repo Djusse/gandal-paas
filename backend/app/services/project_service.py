@@ -1,13 +1,18 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models import Project, PipelineEvent, Image, Deployment
+from app.services.deployment_service import send_deployment
 
 
-async def create_project(db: Session, gl, name: str, owner: str, app_port: int) -> Project:
-    # Check duplicate
+def check_name_available(db: Session, name: str) -> None:
+    """Unicité globale des noms de projet (contrainte produit, §2.1 du plan)."""
     existing = db.query(Project).filter_by(name=name).first()
     if existing:
         raise HTTPException(status_code=409, detail=f"Project with name '{name}' already exists")
+
+
+async def create_project(db: Session, gl, name: str, owner: str, app_port: int) -> Project:
+    check_name_available(db, name)
 
     p = Project(
         name=name,
@@ -83,25 +88,27 @@ async def manual_deploy(db: Session, orch, project_id: int, owner: str, image_id
     db.commit()
 
     try:
-        res = await orch.deploy({
-            'deployment_id': dep.id,
-            'project': p.name,
-            'namespace': p.k8s_namespace,
-            'image': img.repository,
-            'tag': img.tag,
-            'digest': img.digest,
-            'port': p.app_port,
-            'replicas': 1
-        })
-        dep.orchestrator_ref = res.get('deployment_ref')
-        db.commit()
-        db.refresh(dep)
+        # Même chemin que le webhook : commit déjà fait, appel idempotent (R1).
+        await send_deployment(db, orch, p, dep, img)
     except Exception as e:
-        dep.status = 'failed'
-        dep.message = str(e)[:500]
-        p.status = 'failed'
-        p.error = str(e)[:500]
-        db.commit()
         raise HTTPException(status_code=502, detail=f"Orchestrator error: {e}")
 
+    db.refresh(dep)
     return dep
+
+
+async def delete_project(db: Session, orch, project_id: int, owner: str) -> None:
+    """Supprime un projet : namespace (si l'orchestrateur le permet) et lignes."""
+    p = get_user_project(db, project_id, owner)
+
+    if orch is not None and hasattr(orch, "delete_project"):
+        try:
+            await orch.delete_project(p.k8s_namespace)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Orchestrator error: {e}") from e
+
+    db.query(Deployment).filter_by(project_id=p.id).delete()
+    db.query(Image).filter_by(project_id=p.id).delete()
+    db.query(PipelineEvent).filter_by(project_id=p.id).delete()
+    db.delete(p)
+    db.commit()

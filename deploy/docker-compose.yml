@@ -1,0 +1,81 @@
+# Environnement d'intégration : PostgreSQL + backend + orchestrateur.
+#
+#   docker compose up -d --build
+#   docker compose --profile cluster up -d --build   # avec orchestrateur
+#
+# L'orchestrateur a besoin d'un kubeconfig pour joindre un cluster (k3d en
+# local). Par défaut, ce fichier monte `~/.kube/config` en lecture seule.
+# Sans cluster, laissez le profil `cluster` désactivé : le backend reste en
+# ORCHESTRATOR_MODE=mock.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: gandal-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-paas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paas}
+      POSTGRES_DB: ${POSTGRES_DB:-paas}
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paas} -d ${POSTGRES_DB:-paas}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: gandal-backend
+    restart: unless-stopped
+    ports:
+      - '8000:8000'
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-paas}:${POSTGRES_PASSWORD:-paas}@db:5432/${POSTGRES_DB:-paas}
+      GITLAB_MODE: ${GITLAB_MODE:-fake}
+      ORCHESTRATOR_MODE: ${ORCHESTRATOR_MODE:-mock}
+      AUTH_MODE: ${AUTH_MODE:-dev}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-webhook-secret}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      WEBHOOK_PUBLIC_URL: http://localhost:8000
+      ORCHESTRATOR_URL: http://orchestrator:8100
+      ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-dev-orchestrator-token}
+      DEFAULT_REPLICAS: ${DEFAULT_REPLICAS:-2}
+      RECOVERY_ENABLED: ${RECOVERY_ENABLED:-true}
+      RECOVERY_INTERVAL: ${RECOVERY_INTERVAL:-60}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  orchestrator:
+    profiles: ["cluster"]
+    build:
+      context: ../orchestrator
+      dockerfile: Dockerfile
+    container_name: gandal-orchestrator
+    restart: unless-stopped
+    ports:
+      - '8100:8100'
+    environment:
+      GANDAL_BASE_DOMAIN: ${GANDAL_BASE_DOMAIN:-gandal.local}
+      GANDAL_INGRESS_CLASS: ${GANDAL_INGRESS_CLASS:-traefik}
+      GANDAL_REPLICAS: ${GANDAL_REPLICAS:-2}
+      GANDAL_RECONCILE_INTERVAL: ${GANDAL_RECONCILE_INTERVAL:-30}
+      GANDAL_ROLLOUT_TIMEOUT: ${GANDAL_ROLLOUT_TIMEOUT:-300}
+      ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-dev-orchestrator-token}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      BACKEND_URL: http://backend:8000
+      KUBECONFIG: /kube/config
+    volumes:
+      - ${KUBECONFIG_PATH:-~/.kube/config}:/kube/config:ro
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+    name: gandal-pgdata

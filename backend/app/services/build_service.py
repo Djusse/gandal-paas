@@ -1,7 +1,9 @@
 import logging
+
 from app.db import SessionLocal
 from app.deps import get_gitlab, get_orchestrator
-from app.models import Project, Image, Deployment
+from app.models import Deployment, Image, Project
+from app.services.deployment_service import send_deployment
 
 log = logging.getLogger("build-service")
 
@@ -23,25 +25,21 @@ async def on_build_success(project_id: int, sha: str):
             return
 
         img = Image(project_id=p.id, repository=t['repository'], tag=t['tag'], digest=t.get('digest'))
-        dep = Deployment(project_id=p.id, image_id=0)
+        dep = Deployment(project_id=p.id, image_id=0, status='requested')
         db.add(img)
         db.flush()
         dep.image_id = img.id
         db.add(dep)
-        db.flush()
 
-        res = await get_orchestrator().deploy({
-            'deployment_id': dep.id,
-            'project': p.name,
-            'namespace': p.k8s_namespace,
-            'image': img.repository,
-            'tag': img.tag,
-            'digest': img.digest,
-            'port': p.app_port,
-            'replicas': 1
-        })
-        dep.orchestrator_ref, dep.status, p.status = res['deployment_ref'], 'requested', 'deploying'
+        # R1 : on commite AVANT l'appel à l'orchestrateur. La ligne est ainsi
+        # visible du callback, et un commit tardif ne peut plus écraser un
+        # statut `deployed` par `deploying`.
+        p.status = 'deploying'
+        p.error = None
         db.commit()
+        db.refresh(dep)
+
+        await send_deployment(db, get_orchestrator(), p, dep, img)
     except Exception as e:
         log.exception("Error handling build success for project %s: %s", project_id, e)
         db.rollback()

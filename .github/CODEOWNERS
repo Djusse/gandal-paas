@@ -1,0 +1,21 @@
+# Propriétaires par zone (revue obligatoire)
+#
+# Adapter les identifiants GitHub aux comptes réels des trois contributeurs.
+
+*                       @Djusse
+
+/backend/               @Djusse
+/backend/app/           @Djusse
+/backend/tests/         @Djusse
+
+/orchestrator/          @Djusse
+/orchestrator/gandal/   @Djusse
+/orchestrator/tests/    @Djusse
+
+/infra/                 @Djusse
+/infra/k3s/             @Djusse
+/infra/aws/             @Djusse
+
+/deploy/                @Djusse
+/docs/contracts/        @Djusse
+/.github/workflows/     @Djusse

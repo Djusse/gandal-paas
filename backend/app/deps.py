@@ -1,4 +1,4 @@
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, HTTPException
 import httpx
 from app.config import settings
 from app.adapters.gitlab_fake import GitLabFake

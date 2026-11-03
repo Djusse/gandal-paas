@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gandal.local/contracts/deployment-accepted.schema.json",
+  "title": "Réponse de POST /deployments",
+  "description": "Renvoyée en 202 une fois les ressources appliquées dans Kubernetes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["deployment_ref", "status"],
+  "properties": {
+    "deployment_ref": {
+      "type": "string",
+      "description": "Référence stable côté orchestrateur (orch-{deployment_id})."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["deploying", "deployed", "failed"]
+    },
+    "url": {
+      "type": ["string", "null"],
+      "format": "uri"
+    },
+    "message": {
+      "type": "string"
+    }
+  }
+}

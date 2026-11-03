@@ -1,0 +1,183 @@
+# Orchestrateur GANDAL PaaS : ServiceAccount, RBAC minimal et Deployment.
+#
+# Permissions (plan §3.2) :
+#   - ClusterRole sur les namespaces uniquement (créer, lire, modifier, supprimer) ;
+#   - Role applicatif (deployments, services, ingresses, quotas, limitranges,
+#     networkpolicies) accordé par namespace via un RoleBinding créé à la volée.
+#     Ce RoleBinding exige le droit `bind` sur le Role : il est accordé ici au
+#     groupe système de l'orchestrateur, limité au namespace gandal-system.
+#   - Repli documenté : `infra/k3s/orchestrator-clusterrole.yaml` (ClusterRole
+#     unique) si la variante par namespace s'avère trop lourde sur K3s.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gandal-system
+  labels:
+    gandal.io/managed: "false"
+    app.kubernetes.io/part-of: gandal-paas
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orchestrator
+  namespace: gandal-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gandal-orchestrator-namespaces
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gandal-orchestrator-namespaces
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gandal-orchestrator-namespaces
+subjects:
+  - kind: ServiceAccount
+    name: orchestrator
+    namespace: gandal-system
+---
+# Rôle applicatif, destiné à être lié dans chaque namespace de projet.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gandal-project-app
+  labels:
+    gandal.io/role: project-app
+rules:
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges", "services"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+---
+# Autorise l'orchestrateur à créer un RoleBinding pour gandal-project-app.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gandal-orchestrator-bind
+  namespace: gandal-system
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["create", "patch", "get", "list"]
+    resourceNames: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gandal-orchestrator-bind
+  namespace: gandal-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gandal-orchestrator-bind
+subjects:
+  - kind: ServiceAccount
+    name: orchestrator
+    namespace: gandal-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orchestrator-config
+  namespace: gandal-system
+type: Opaque
+stringData:
+  # À remplacer avant toute mise en service (voir .env.example).
+  ORCHESTRATOR_TOKEN: change-me-long-random
+  INTERNAL_TOKEN: change-me-long-random
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-config
+  namespace: gandal-system
+data:
+  GANDAL_BASE_DOMAIN: gandal.local
+  GANDAL_INGRESS_CLASS: traefik
+  GANDAL_REPLICAS: "2"
+  GANDAL_RECONCILE_INTERVAL: "30"
+  GANDAL_ROLLOUT_TIMEOUT: "300"
+  BACKEND_URL: http://backend.gandal-system.svc.cluster.local:8000
+  GANDAL_IN_CLUSTER: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: gandal-system
+  labels:
+    app.kubernetes.io/name: gandal-orchestrator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gandal-orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gandal-orchestrator
+    spec:
+      serviceAccountName: orchestrator
+      containers:
+        - name: orchestrator
+          image: localhost:5000/gandal/orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8100
+          envFrom:
+            - configMapRef:
+                name: orchestrator-config
+            - secretRef:
+                name: orchestrator-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8100
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8100
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: gandal-system
+spec:
+  selector:
+    app.kubernetes.io/name: gandal-orchestrator
+  ports:
+    - port: 8100
+      targetPort: 8100
