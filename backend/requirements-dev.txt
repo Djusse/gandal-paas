@@ -2,3 +2,6 @@
 -r requirements.txt
 pytest==9.1.1
 ruff==0.14.3
+# Variante binaire du pilote : fournit libpq pour les tests PostgreSQL,
+# sans dépendre des paquets système (la prod utilise requirements.txt).
+psycopg[binary]==3.3.6

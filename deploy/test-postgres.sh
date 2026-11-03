@@ -30,15 +30,21 @@ docker run -d --name "$CONTAINER" \
   -p "${PORT}:5432" \
   postgres:16-alpine >/dev/null
 
-echo "==> Attente de PostgreSQL (max 60 s)"
-for _ in $(seq 1 60); do
-  if docker exec "$CONTAINER" pg_isready -U "$USER_NAME" -d "$DB" >/dev/null 2>&1; then
-    break
+echo "==> Attente de PostgreSQL (max 120 s)"
+# L'entrypoint redémarre le serveur après l'initialisation : une seule réponse
+# de `pg_isready` ne suffit pas, on exige deux requêtes authentifiées de suite.
+ready=0
+for _ in $(seq 1 120); do
+  if docker exec "$CONTAINER" psql -U "$USER_NAME" -d "$DB" -c 'SELECT 1' >/dev/null 2>&1; then
+    ready=$((ready + 1))
+    [ "$ready" -ge 2 ] && break
+  else
+    ready=0
   fi
   sleep 1
 done
 
-if ! docker exec "$CONTAINER" pg_isready -U "$USER_NAME" -d "$DB" >/dev/null 2>&1; then
+if ! docker exec "$CONTAINER" psql -U "$USER_NAME" -d "$DB" -c 'SELECT 1' >/dev/null 2>&1; then
   echo "PostgreSQL n'a pas démarré" >&2
   docker logs "$CONTAINER" >&2 || true
   exit 1
