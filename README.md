@@ -45,14 +45,23 @@ Conventions (décision D3) :
 
 ## Démarrage rapide — développement local
 
-```bash
-# 1. Backend + PostgreSQL
-cd deploy && docker compose up -d --build
-curl -s http://localhost:8000/health
+### Tout vérifier en une commande
 
-# 2. Tests
-cd backend && pip install -r requirements-dev.txt && pytest -q
-cd orchestrator && pip install -r requirements-dev.txt && pytest -q
+```bash
+./deploy/verify-local.sh
+```
+
+Cette commande crée `.venv/`, installe les dépendances et enchaîne : tests
+unitaires (37 backend + 58 orchestrateur), `ruff`, liens Markdown, manifestes
+YAML, tests PostgreSQL (R1) et un bout en bout en mode mock. **Aucun cluster
+n'est nécessaire.** Détail et options : [`docs/TESTING.md`](docs/TESTING.md).
+
+### Lancer les services
+
+```bash
+cd deploy && cp .env.example .env
+docker compose up -d --build
+curl -s http://localhost:8000/health
 ```
 
 Le backend démarre par défaut avec `GITLAB_MODE=fake` et `ORCHESTRATOR_MODE=mock` :
