@@ -8,7 +8,7 @@ WORKDIR /app
 
 # Installation des dépendances système minimales (curl pour le healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+    curl libpq-dev libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Mise en cache de l'installation des dépendances Python
